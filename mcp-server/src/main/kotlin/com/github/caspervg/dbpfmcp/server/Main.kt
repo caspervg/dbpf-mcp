@@ -1,6 +1,7 @@
 package com.github.caspervg.dbpfmcp.server
 
 import com.github.caspervg.dbpfmcp.backend.scdbpf.ScdbpfAdapter
+import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
 import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
 import com.github.caspervg.dbpfmcp.core.DbpfException
 import com.github.caspervg.dbpfmcp.core.ExemplarProperty
@@ -758,6 +759,27 @@ fun main(): Unit = runBlocking {
             }
         }
         addTool(
+            name = "decode_qfs",
+            description = "Decode a raw QFS/EA RefPack payload from base64, with optional DBPF compressed-size prefix detection",
+            inputSchema = decodeQfsInputSchema(),
+            title = "Decode QFS Payload",
+            toolAnnotations = readOnlyToolAnnotations("Decode QFS Payload"),
+        ) { request ->
+            handleTool(json) {
+                val result = adapter.decodeQfs(parseDecodeQfsRequest(request))
+                buildJsonObject {
+                    put("compressedSize", result.compressedSize)
+                    put("decodedSize", result.decodedSize)
+                    put("declaredDecodedSize", result.declaredDecodedSize)
+                    put("hasDbpfSizePrefix", result.hasDbpfSizePrefix)
+                    put("extendedHeader", result.extendedHeader)
+                    put("payloadBase64", result.payloadBase64)
+                    put("payloadHexPreview", result.payloadHexPreview)
+                    put("utf8Preview", result.utf8Preview?.let(::JsonPrimitive) ?: JsonNull)
+                }
+            }
+        }
+        addTool(
             name = "read_keycfg",
             description = "Heuristically decode a KEYCFG/TAB-like DBPF entry into text fragments and candidate shortcut records",
             inputSchema = readKeyCfgInputSchema(),
@@ -1073,6 +1095,18 @@ private fun parseDecodePropertyValueRequest(request: CallToolRequest): DecodePro
         values = args.requiredArray("values"),
     )
 }
+
+private fun parseDecodeQfsRequest(request: CallToolRequest): DecodeQfsRequest =
+    DecodeQfsRequest(
+        payloadBase64 = request.arguments.requiredString("payloadBase64"),
+        maxBytes = request.arguments.optionalIntInRange(
+            "maxBytes",
+            min = 1,
+            max = MAX_ENTRY_PREVIEW_BYTES,
+            default = DEFAULT_RAW_MAX_BYTES,
+        ),
+        hasDbpfSizePrefix = request.arguments.optionalBoolean("hasDbpfSizePrefix"),
+    )
 
 private fun parseReadRawEntryRequest(request: CallToolRequest): ReadRawEntryRequest {
     val (path, tgi) = parseReadEntryRequest(request)
@@ -1519,6 +1553,24 @@ private fun readRawEntryInputSchema(): Tool.Input = Tool.Input(
         }
     },
     required = listOf("path"),
+)
+
+private fun decodeQfsInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("payloadBase64") {
+            put("type", "string")
+            put("description", "Base64 raw QFS stream. DBPF entry bodies may include a 4-byte compressed-size prefix before the QFS header.")
+        }
+        putJsonObject("maxBytes") {
+            put("type", "integer")
+            put("description", "Maximum decoded bytes to return as base64/hex preview, 1-$MAX_ENTRY_PREVIEW_BYTES. Default: $DEFAULT_RAW_MAX_BYTES.")
+        }
+        putJsonObject("hasDbpfSizePrefix") {
+            put("type", "boolean")
+            put("description", "Set true when payloadBase64 includes the DBPF 4-byte compressed-size prefix. Omit to auto-detect.")
+        }
+    },
+    required = listOf("payloadBase64"),
 )
 
 private fun readKeyCfgInputSchema(): Tool.Input = Tool.Input(

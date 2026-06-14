@@ -1,6 +1,7 @@
 package com.github.caspervg.dbpfmcp.backend.scdbpf
 
 import com.github.caspervg.dbpfmcp.core.CohortModel
+import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
 import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
 import com.github.caspervg.dbpfmcp.core.DecodedPropertyModel
 import com.github.caspervg.dbpfmcp.core.DescribePropertyRequest
@@ -39,6 +40,7 @@ import com.github.caspervg.dbpfmcp.core.PackageSummary
 import com.github.caspervg.dbpfmcp.core.PackageError
 import com.github.caspervg.dbpfmcp.core.ParentChainItem
 import com.github.caspervg.dbpfmcp.core.PropertyDescription
+import com.github.caspervg.dbpfmcp.core.QfsDecodedModel
 import com.github.caspervg.dbpfmcp.core.ReadCohortRequest
 import com.github.caspervg.dbpfmcp.core.ReadCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarRequest
@@ -713,6 +715,43 @@ class ScdbpfAdapter : DbpfService {
         decodePropertyValue(request.id, request.values)
             ?: throw InputError("Unknown property ID: ${request.id.toULong().toString(16).uppercase()}")
 
+    override fun decodeQfs(request: DecodeQfsRequest): QfsDecodedModel {
+        val maxBytes = request.maxBytes
+        if (maxBytes != null && maxBytes <= 0) {
+            throw InputError("maxBytes must be > 0")
+        }
+        val input = try {
+            Base64.getDecoder().decode(request.payloadBase64)
+        } catch (_: IllegalArgumentException) {
+            throw InputError("payloadBase64 is not valid base64")
+        }
+        val offset = when (request.hasDbpfSizePrefix) {
+            true -> 4
+            false -> 0
+            null -> when {
+                QfsDecoder.isQfsCompressed(input, 0) -> 0
+                input.size >= 6 && QfsDecoder.isQfsCompressed(input, 4) -> 4
+                else -> 0
+            }
+        }
+        if (offset == 4 && input.size < 6) {
+            throw DecodeError("QFS payload is too short for a DBPF compressed-size prefix")
+        }
+        val decoded = QfsDecoder.decode(input, offset)
+            ?: throw DecodeError("Input is not a valid QFS stream")
+        val slice = if (maxBytes != null && decoded.bytes.size > maxBytes) decoded.bytes.copyOf(maxBytes) else decoded.bytes
+        return QfsDecodedModel(
+            compressedSize = input.size,
+            decodedSize = decoded.bytes.size,
+            declaredDecodedSize = decoded.declaredSize,
+            hasDbpfSizePrefix = offset == 4,
+            extendedHeader = decoded.extendedHeader,
+            payloadBase64 = Base64.getEncoder().encodeToString(slice),
+            payloadHexPreview = slice.joinToString("") { byte -> "%02X".format(byte) },
+            utf8Preview = utf8Preview(slice),
+        )
+    }
+
     override fun readKeyCfg(request: ReadKeyCfgRequest): KeyCfgModel {
         val maxBytes = request.maxBytes
         if (maxBytes != null && maxBytes <= 0) {
@@ -774,9 +813,6 @@ class ScdbpfAdapter : DbpfService {
         }
         val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
         val slice = if (maxBytes != null && bytes.size > maxBytes) bytes.copyOf(maxBytes) else bytes
-        val utf8Preview = slice.toString(StandardCharsets.UTF_8)
-            .takeIf { text -> text.isNotEmpty() && text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
-
         return RawEntryModel(
             tgi = request.tgi,
             kind = kindForType(request.tgi.type),
@@ -784,7 +820,7 @@ class ScdbpfAdapter : DbpfService {
             size = bytes.size,
             payloadBase64 = Base64.getEncoder().encodeToString(slice),
             payloadHexPreview = slice.joinToString("") { byte -> "%02X".format(byte) },
-            utf8Preview = utf8Preview,
+            utf8Preview = utf8Preview(slice),
         )
     }
 
@@ -1065,6 +1101,10 @@ class ScdbpfAdapter : DbpfService {
         "${formatHex32(tgi.type)}-${formatHex32(tgi.group)}-${formatHex32(tgi.instance)}"
 
     private fun unsignedInt(value: Any): Long = (value as Number).toLong() and 0xFFFF_FFFFL
+
+    private fun utf8Preview(bytes: ByteArray): String? =
+        bytes.toString(StandardCharsets.UTF_8)
+            .takeIf { text -> text.isNotEmpty() && text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
 
     private fun isBlankTgi(tgi: ScTgi): Boolean =
         unsignedInt(tgi.tid()) == 0L && unsignedInt(tgi.gid()) == 0L && unsignedInt(tgi.iid()) == 0L

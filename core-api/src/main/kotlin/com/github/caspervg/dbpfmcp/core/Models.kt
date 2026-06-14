@@ -419,6 +419,13 @@ data class DecodePropertyValueRequest(
 )
 
 @Serializable
+data class DecodeQfsRequest(
+    val payloadBase64: String,
+    val maxBytes: Int? = null,
+    val hasDbpfSizePrefix: Boolean? = null,
+)
+
+@Serializable
 data class ReadRawEntryRequest(
     val path: String,
     val tgi: Tgi,
@@ -446,6 +453,18 @@ data class RawEntryModel(
     val kind: KnownEntryKind,
     val compressed: Boolean,
     val size: Int,
+    val payloadBase64: String,
+    val payloadHexPreview: String,
+    val utf8Preview: String? = null,
+)
+
+@Serializable
+data class QfsDecodedModel(
+    val compressedSize: Int,
+    val decodedSize: Int,
+    val declaredDecodedSize: Int,
+    val hasDbpfSizePrefix: Boolean,
+    val extendedHeader: Boolean,
     val payloadBase64: String,
     val payloadHexPreview: String,
     val utf8Preview: String? = null,
@@ -730,6 +749,8 @@ interface DbpfService {
     fun describeProperty(request: DescribePropertyRequest): PropertyDescription
 
     fun decodePropertyValue(request: DecodePropertyValueRequest): DecodedPropertyModel
+
+    fun decodeQfs(request: DecodeQfsRequest): QfsDecodedModel
 
     fun readKeyCfg(request: ReadKeyCfgRequest): KeyCfgModel
 

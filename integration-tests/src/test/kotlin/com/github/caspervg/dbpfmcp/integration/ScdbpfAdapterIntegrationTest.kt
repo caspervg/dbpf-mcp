@@ -1,6 +1,7 @@
 package com.github.caspervg.dbpfmcp.integration
 
 import com.github.caspervg.dbpfmcp.backend.scdbpf.ScdbpfAdapter
+import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
 import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
 import com.github.caspervg.dbpfmcp.core.ExportCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportExemplarTextRequest
@@ -43,6 +44,7 @@ import java.nio.file.Path
 import java.nio.charset.StandardCharsets
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Base64
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -217,6 +219,18 @@ class ScdbpfAdapterIntegrationTest {
         )
         assertEquals("Exemplar Type", decodedProperty.property.name)
         assertEquals("Network", decodedProperty.values.first().label)
+
+        val qfsStream = byteArrayOf(9, 0, 0, 0, 0x10, 0xFB.toByte(), 0, 0, 3, 0xFF.toByte()) +
+            "SC4".encodeToByteArray()
+        val qfsDecoded = adapter.decodeQfs(
+            DecodeQfsRequest(
+                payloadBase64 = Base64.getEncoder().encodeToString(qfsStream),
+                maxBytes = 16,
+            )
+        )
+        assertEquals(3, qfsDecoded.decodedSize)
+        assertTrue(qfsDecoded.hasDbpfSizePrefix)
+        assertEquals("SC4", qfsDecoded.utf8Preview)
 
         val exemplarText = adapter.readExemplarText(
             ReadExemplarTextRequest(
