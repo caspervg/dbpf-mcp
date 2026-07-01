@@ -433,6 +433,154 @@ data class ReadRawEntryRequest(
 )
 
 @Serializable
+data class ExemplarPropertyInput(
+    val id: Long,
+    val type: String? = null,
+    val values: List<JsonElement>,
+)
+
+@Serializable
+data class ExemplarWriteEntry(
+    val tgi: Tgi,
+    val isCohort: Boolean = false,
+    val parentCohort: Tgi? = null,
+    val properties: List<ExemplarPropertyInput>,
+)
+
+@Serializable
+data class WriteExemplarsRequest(
+    val outputPath: String,
+    val entries: List<ExemplarWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+    val validateAgainstRegistry: Boolean = true,
+)
+
+@Serializable
+data class WriteExemplarsResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
+    val warnings: List<String> = emptyList(),
+)
+
+@Serializable
+data class LTextWriteEntry(
+    val tgi: Tgi,
+    val text: String,
+)
+
+@Serializable
+data class WriteLTextRequest(
+    val outputPath: String,
+    val entries: List<LTextWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteLTextResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
+)
+
+@Serializable
+data class FshElementInput(
+    val format: String,
+    val label: String? = null,
+    val imagesPngBase64: List<String>,
+)
+
+@Serializable
+data class FshWriteEntry(
+    val tgi: Tgi,
+    val dirId: String = "G264",
+    val elements: List<FshElementInput>,
+)
+
+@Serializable
+data class WriteFshRequest(
+    val outputPath: String,
+    val entries: List<FshWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteFshResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
+    val warnings: List<String> = emptyList(),
+)
+
+@Serializable
+data class IniEntry(
+    val key: String,
+    val value: String,
+)
+
+@Serializable
+data class IniSection(
+    val name: String? = null,
+    val entries: List<IniEntry>,
+)
+
+@Serializable
+data class ReadIniRequest(
+    val path: String,
+)
+
+@Serializable
+data class ReadIniResult(
+    val path: String,
+    val sections: List<IniSection>,
+    val text: String,
+)
+
+@Serializable
+data class WriteIniRequest(
+    val outputPath: String,
+    val sections: List<IniSection>,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteIniResult(
+    val outputPath: String,
+    val sectionCount: Int,
+    val entryCount: Int,
+    val bytesWritten: Long,
+)
+
+@Serializable
+data class RawWriteEntry(
+    val tgi: Tgi,
+    val payloadBase64: String,
+)
+
+@Serializable
+data class WriteRawEntriesRequest(
+    val outputPath: String,
+    val entries: List<RawWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteRawEntriesResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
+)
+
+@Serializable
 data class ReadKeyCfgRequest(
     val path: String,
     val tgi: Tgi,
@@ -757,4 +905,16 @@ interface DbpfService {
     fun readTabBinary(request: ReadTabBinaryRequest): TabBinaryModel
 
     fun readRawEntry(request: ReadRawEntryRequest): RawEntryModel
+
+    fun writeExemplars(request: WriteExemplarsRequest): WriteExemplarsResult
+
+    fun writeLText(request: WriteLTextRequest): WriteLTextResult
+
+    fun writeFsh(request: WriteFshRequest): WriteFshResult
+
+    fun readIni(request: ReadIniRequest): ReadIniResult
+
+    fun writeIni(request: WriteIniRequest): WriteIniResult
+
+    fun writeRawEntries(request: WriteRawEntriesRequest): WriteRawEntriesResult
 }

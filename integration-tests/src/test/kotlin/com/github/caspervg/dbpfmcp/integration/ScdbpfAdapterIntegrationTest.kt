@@ -19,6 +19,8 @@ import com.github.caspervg.dbpfmcp.core.ReadCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ListEntriesRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarTextRequest
+import com.github.caspervg.dbpfmcp.core.ReadFshRequest
+import com.github.caspervg.dbpfmcp.core.ReadImageEntryRequest
 import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.ReadLTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadRawEntryRequest
@@ -424,6 +426,478 @@ class ScdbpfAdapterIntegrationTest {
         )
         assertEquals(1, filteredSearch.totalMatches)
         assertEquals(Tgi(0x6534284AL, 0L, 0x87654321L), filteredSearch.matches.first().tgi)
+    }
+
+    @Test
+    fun `writes new exemplars and cohort to a fresh dat file`() {
+        val outputPath = tempDir.resolve("written.dat")
+        val adapter = ScdbpfAdapter()
+
+        val cohortTgi = Tgi(0x05342861L, 0L, 0x22222222L)
+        val exemplarTgi = Tgi(0x6534284AL, 0L, 0x11111111L)
+
+        val result = adapter.writeExemplars(
+            com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest(
+                outputPath = outputPath.toString(),
+                entries = listOf(
+                    com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                        tgi = cohortTgi,
+                        isCohort = true,
+                        properties = listOf(
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x20L,
+                                type = "String",
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive("Written Cohort")),
+                            ),
+                        ),
+                    ),
+                    com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                        tgi = exemplarTgi,
+                        isCohort = false,
+                        parentCohort = cohortTgi,
+                        properties = listOf(
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x20L,
+                                type = "String",
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive("Written Exemplar")),
+                            ),
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x27812820L,
+                                type = "Uint32",
+                                values = listOf(
+                                    kotlinx.serialization.json.JsonPrimitive(1),
+                                    kotlinx.serialization.json.JsonPrimitive(2),
+                                    kotlinx.serialization.json.JsonPrimitive(3),
+                                ),
+                            ),
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x10L,
+                                type = "Uint8",
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive(0x0B)),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(2, result.entryCount)
+        assertTrue(java.nio.file.Files.exists(outputPath))
+
+        val listResult = adapter.listEntries(ListEntriesRequest(path = outputPath.toString()))
+        assertEquals(2, listResult.entryCount)
+
+        val exemplarResult = adapter.readExemplar(ReadExemplarRequest(path = outputPath.toString(), tgi = exemplarTgi))
+        assertEquals(cohortTgi, exemplarResult.parentCohort)
+        assertEquals("Written Exemplar", exemplarResult.exemplarName)
+        val multiProp = exemplarResult.properties.first { it.id == 0x27812820L }
+        assertEquals(3, multiProp.values.size)
+
+        val cohortResult = adapter.readCohort(ReadCohortRequest(path = outputPath.toString(), tgi = cohortTgi))
+        assertEquals("Written Cohort", cohortResult.cohortName)
+
+        assertFailsWith<InputError> {
+            adapter.writeExemplars(
+                com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest(
+                    outputPath = outputPath.toString(),
+                    entries = listOf(
+                        com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                            tgi = exemplarTgi,
+                            properties = listOf(
+                                com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                    id = 0x20L,
+                                    type = "String",
+                                    values = listOf(kotlinx.serialization.json.JsonPrimitive("x")),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `merges patched entries into an existing dat and infers or flags property types`() {
+        val outputPath = tempDir.resolve("merged.dat")
+        val adapter = ScdbpfAdapter()
+
+        val cohortTgi = Tgi(0x05342861L, 0L, 0x33333333L)
+        val exemplarATgi = Tgi(0x6534284AL, 0L, 0xAAAAAAAAL.toLong())
+        val exemplarBTgi = Tgi(0x6534284AL, 0L, 0xBBBBBBBBL.toLong())
+
+        adapter.writeExemplars(
+            com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest(
+                outputPath = outputPath.toString(),
+                entries = listOf(
+                    com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                        tgi = cohortTgi,
+                        isCohort = true,
+                        properties = listOf(
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x20L,
+                                type = "String",
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive("Base Cohort")),
+                            ),
+                        ),
+                    ),
+                    com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                        tgi = exemplarATgi,
+                        properties = listOf(
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x20L,
+                                type = "String",
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive("Original A")),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val mergeResult = adapter.writeExemplars(
+            com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest(
+                outputPath = outputPath.toString(),
+                merge = true,
+                entries = listOf(
+                    com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                        tgi = exemplarATgi,
+                        properties = listOf(
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x20L,
+                                type = "String",
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive("Replaced A")),
+                            ),
+                        ),
+                    ),
+                    com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                        tgi = exemplarBTgi,
+                        parentCohort = cohortTgi,
+                        properties = listOf(
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x20L,
+                                type = "String",
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive("New B")),
+                            ),
+                            // type omitted: 0x10 (Exemplar Type) is Uint32 in the bundled registry
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x10L,
+                                values = listOf(kotlinx.serialization.json.JsonPrimitive(0x0B)),
+                            ),
+                            // declared type deliberately mismatches the registry's Uint32 to prove the override works
+                            com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                id = 0x27812820L,
+                                type = "Tgi",
+                                values = listOf(
+                                    kotlinx.serialization.json.JsonArray(
+                                        listOf(
+                                            kotlinx.serialization.json.JsonPrimitive("0x6534284A"),
+                                            kotlinx.serialization.json.JsonPrimitive(0),
+                                            kotlinx.serialization.json.JsonPrimitive(0x99999999L),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(3, mergeResult.entryCount)
+        assertTrue(mergeResult.warnings.any { it.contains("inferred as Uint32") })
+        assertTrue(mergeResult.warnings.any { it.contains("does not match registry type") })
+
+        val listResult = adapter.listEntries(ListEntriesRequest(path = outputPath.toString()))
+        assertEquals(3, listResult.entryCount)
+
+        val exemplarA = adapter.readExemplar(ReadExemplarRequest(path = outputPath.toString(), tgi = exemplarATgi))
+        assertEquals("Replaced A", exemplarA.exemplarName)
+
+        val exemplarB = adapter.readExemplar(ReadExemplarRequest(path = outputPath.toString(), tgi = exemplarBTgi))
+        assertEquals(cohortTgi, exemplarB.parentCohort)
+        assertEquals("New B", exemplarB.exemplarName)
+        val tgiProp = exemplarB.properties.first { it.id == 0x27812820L }
+        assertEquals(3, tgiProp.values.size)
+
+        val cohort = adapter.readCohort(ReadCohortRequest(path = outputPath.toString(), tgi = cohortTgi))
+        assertEquals("Base Cohort", cohort.cohortName)
+
+        assertFailsWith<InputError> {
+            adapter.writeExemplars(
+                com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest(
+                    outputPath = tempDir.resolve("rejected.dat").toString(),
+                    entries = listOf(
+                        com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                            tgi = exemplarBTgi,
+                            properties = listOf(
+                                com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                    id = 0x27812821L,
+                                    type = "Uint8",
+                                    values = listOf(kotlinx.serialization.json.JsonPrimitive(300)),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        }
+
+        assertFailsWith<InputError> {
+            adapter.writeExemplars(
+                com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest(
+                    outputPath = tempDir.resolve("rejected2.dat").toString(),
+                    entries = listOf(
+                        com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                            tgi = exemplarATgi,
+                            properties = listOf(
+                                com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                    id = 0x20L,
+                                    type = "String",
+                                    values = listOf(kotlinx.serialization.json.JsonPrimitive("dup")),
+                                ),
+                            ),
+                        ),
+                        com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry(
+                            tgi = exemplarATgi,
+                            properties = listOf(
+                                com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput(
+                                    id = 0x20L,
+                                    type = "String",
+                                    values = listOf(kotlinx.serialization.json.JsonPrimitive("dup2")),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `writes and merges LTEXT entries`() {
+        val outputPath = tempDir.resolve("ltext.dat")
+        val adapter = ScdbpfAdapter()
+        val tgi = Tgi(0x2026960BL, 0L, 0x44444444L)
+
+        val createResult = adapter.writeLText(
+            com.github.caspervg.dbpfmcp.core.WriteLTextRequest(
+                outputPath = outputPath.toString(),
+                entries = listOf(
+                    com.github.caspervg.dbpfmcp.core.LTextWriteEntry(tgi = tgi, text = "Original tooltip"),
+                ),
+            ),
+        )
+        assertEquals(1, createResult.entryCount)
+
+        val readBack = adapter.readLText(ReadLTextRequest(path = outputPath.toString(), tgi = tgi))
+        assertEquals("Original tooltip", readBack.text)
+
+        val secondTgi = Tgi(0x2026960BL, 0L, 0x55555555L)
+        val mergeResult = adapter.writeLText(
+            com.github.caspervg.dbpfmcp.core.WriteLTextRequest(
+                outputPath = outputPath.toString(),
+                merge = true,
+                entries = listOf(
+                    com.github.caspervg.dbpfmcp.core.LTextWriteEntry(tgi = tgi, text = "Replaced tooltip"),
+                    com.github.caspervg.dbpfmcp.core.LTextWriteEntry(tgi = secondTgi, text = "New tooltip"),
+                ),
+            ),
+        )
+        assertEquals(2, mergeResult.entryCount)
+        assertEquals(
+            "Replaced tooltip",
+            adapter.readLText(ReadLTextRequest(path = outputPath.toString(), tgi = tgi)).text,
+        )
+        assertEquals(
+            "New tooltip",
+            adapter.readLText(ReadLTextRequest(path = outputPath.toString(), tgi = secondTgi)).text,
+        )
+    }
+
+    @Test
+    fun `writes FSH entries from PNG and reads them back as images`() {
+        val outputPath = tempDir.resolve("fsh.dat")
+        val adapter = ScdbpfAdapter()
+        val tgi = Tgi(0x7AB50E44L, 0x1ABE787DL, 0x00000042L)
+
+        val basePng = solidColorPngBase64(8, 8, 0xFFAA5533.toInt())
+        val mipPng = solidColorPngBase64(4, 4, 0xFFAA5533.toInt())
+
+        val result = adapter.writeFsh(
+            com.github.caspervg.dbpfmcp.core.WriteFshRequest(
+                outputPath = outputPath.toString(),
+                entries = listOf(
+                    com.github.caspervg.dbpfmcp.core.FshWriteEntry(
+                        tgi = tgi,
+                        elements = listOf(
+                            com.github.caspervg.dbpfmcp.core.FshElementInput(
+                                format = "A8R8G8B8",
+                                label = "TestSwatch",
+                                imagesPngBase64 = listOf(basePng, mipPng),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(1, result.entryCount)
+
+        val fshModel = adapter.readFsh(ReadFshRequest(path = outputPath.toString(), tgi = tgi))
+        assertEquals(1, fshModel.elementCount)
+        assertEquals(2, fshModel.elements.first().imageCount)
+        assertEquals(8, fshModel.elements.first().images[0].width)
+        assertEquals(4, fshModel.elements.first().images[1].width)
+
+        val image = adapter.readImageEntry(
+            ReadImageEntryRequest(path = outputPath.toString(), tgi = tgi, elementIndex = 0, imageIndex = 0),
+        )
+        assertEquals(8, image.width)
+        assertEquals(8, image.height)
+
+        assertFailsWith<InputError> {
+            adapter.writeFsh(
+                com.github.caspervg.dbpfmcp.core.WriteFshRequest(
+                    outputPath = tempDir.resolve("fsh-bad-mip.dat").toString(),
+                    entries = listOf(
+                        com.github.caspervg.dbpfmcp.core.FshWriteEntry(
+                            tgi = tgi,
+                            elements = listOf(
+                                com.github.caspervg.dbpfmcp.core.FshElementInput(
+                                    format = "A8R8G8B8",
+                                    imagesPngBase64 = listOf(basePng, solidColorPngBase64(3, 3, 0xFFAA5533.toInt())),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        }
+
+        assertFailsWith<InputError> {
+            adapter.writeFsh(
+                com.github.caspervg.dbpfmcp.core.WriteFshRequest(
+                    outputPath = tempDir.resolve("fsh-bad-dxt.dat").toString(),
+                    entries = listOf(
+                        com.github.caspervg.dbpfmcp.core.FshWriteEntry(
+                            tgi = tgi,
+                            elements = listOf(
+                                com.github.caspervg.dbpfmcp.core.FshElementInput(
+                                    format = "Dxt1",
+                                    imagesPngBase64 = listOf(solidColorPngBase64(5, 5, 0xFFAA5533.toInt())),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `writes and merges raw entries`() {
+        val outputPath = tempDir.resolve("raw.dat")
+        val adapter = ScdbpfAdapter()
+        val tgi = Tgi(0xAA5C3144L, 0L, 0x77777777L)
+        val payload = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3, 4, 5))
+
+        val result = adapter.writeRawEntries(
+            com.github.caspervg.dbpfmcp.core.WriteRawEntriesRequest(
+                outputPath = outputPath.toString(),
+                entries = listOf(
+                    com.github.caspervg.dbpfmcp.core.RawWriteEntry(tgi = tgi, payloadBase64 = payload),
+                ),
+            ),
+        )
+        assertEquals(1, result.entryCount)
+
+        val raw = adapter.readRawEntry(ReadRawEntryRequest(path = outputPath.toString(), tgi = tgi))
+        assertEquals(5, raw.size)
+        assertEquals(payload, raw.payloadBase64)
+    }
+
+    @Test
+    fun `reads and merge-writes INI files preserving unrelated content`() {
+        val iniPath = tempDir.resolve("network.ini")
+        val adapter = ScdbpfAdapter()
+
+        val initialText = """
+            ; header comment
+            globalKey=globalValue
+
+            [PowerPoles]
+            defaultPole=0x00000001
+            ; keep this comment
+            spacing=4
+
+            [Other]
+            unrelated=1
+        """.trimIndent()
+        java.nio.file.Files.writeString(iniPath, initialText)
+
+        val readResult = adapter.readIni(com.github.caspervg.dbpfmcp.core.ReadIniRequest(path = iniPath.toString()))
+        assertEquals(3, readResult.sections.size)
+        val preamble = readResult.sections.first { it.name == null }
+        assertEquals("globalValue", preamble.entries.first { it.key == "globalKey" }.value)
+        val poles = readResult.sections.first { it.name == "PowerPoles" }
+        assertEquals("0x00000001", poles.entries.first { it.key == "defaultPole" }.value)
+
+        adapter.writeIni(
+            com.github.caspervg.dbpfmcp.core.WriteIniRequest(
+                outputPath = iniPath.toString(),
+                merge = true,
+                sections = listOf(
+                    com.github.caspervg.dbpfmcp.core.IniSection(
+                        name = "PowerPoles",
+                        entries = listOf(
+                            com.github.caspervg.dbpfmcp.core.IniEntry("defaultPole", "0x00000099"),
+                            com.github.caspervg.dbpfmcp.core.IniEntry("newKey", "newValue"),
+                        ),
+                    ),
+                    com.github.caspervg.dbpfmcp.core.IniSection(
+                        name = "Fresh",
+                        entries = listOf(com.github.caspervg.dbpfmcp.core.IniEntry("k", "v")),
+                    ),
+                ),
+            ),
+        )
+
+        val mergedText = java.nio.file.Files.readString(iniPath)
+        assertTrue(mergedText.contains("; header comment"))
+        assertTrue(mergedText.contains("; keep this comment"))
+        assertTrue(mergedText.contains("unrelated=1"))
+        assertTrue(mergedText.contains("defaultPole=0x00000099"))
+        assertTrue(mergedText.contains("newKey=newValue"))
+        assertTrue(mergedText.contains("[Fresh]"))
+        assertTrue(mergedText.contains("k=v"))
+
+        val mergedResult = adapter.readIni(com.github.caspervg.dbpfmcp.core.ReadIniRequest(path = iniPath.toString()))
+        val mergedPoles = mergedResult.sections.first { it.name == "PowerPoles" }
+        assertEquals("0x00000099", mergedPoles.entries.first { it.key == "defaultPole" }.value)
+        assertEquals(4, mergedResult.sections.size)
+
+        assertFailsWith<InputError> {
+            adapter.writeIni(
+                com.github.caspervg.dbpfmcp.core.WriteIniRequest(
+                    outputPath = iniPath.toString(),
+                    sections = listOf(
+                        com.github.caspervg.dbpfmcp.core.IniSection(name = "A", entries = emptyList()),
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun solidColorPngBase64(width: Int, height: Int, argb: Int): String {
+        val image = java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                image.setRGB(x, y, argb)
+            }
+        }
+        val bytes = java.io.ByteArrayOutputStream()
+        javax.imageio.ImageIO.write(image, "png", bytes)
+        return Base64.getEncoder().encodeToString(bytes.toByteArray())
     }
 
     @Test
