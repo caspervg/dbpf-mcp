@@ -86,8 +86,6 @@ import com.github.caspervg.dbpfmcp.core.FshElementInput
 import com.github.caspervg.dbpfmcp.core.FshWriteEntry
 import com.github.caspervg.dbpfmcp.core.WriteFshRequest
 import com.github.caspervg.dbpfmcp.core.WriteFshResult
-import com.github.caspervg.dbpfmcp.core.IniEntry
-import com.github.caspervg.dbpfmcp.core.IniSection
 import com.github.caspervg.dbpfmcp.core.ReadIniRequest
 import com.github.caspervg.dbpfmcp.core.ReadIniResult
 import com.github.caspervg.dbpfmcp.core.WriteIniRequest
@@ -159,6 +157,16 @@ import javax.imageio.ImageIO
 import java.awt.image.BufferedImage
 
 class ScdbpfAdapter : DbpfService {
+    private fun decodeTextEntryPayload(storedBytes: ByteArray, tgi: Tgi): ByteArray {
+        val qfsOffset = when {
+            QfsDecoder.isQfsCompressed(storedBytes, 0) -> 0
+            storedBytes.size >= 6 && QfsDecoder.isQfsCompressed(storedBytes, 4) -> 4
+            else -> return storedBytes
+        }
+        return QfsDecoder.decode(storedBytes, qfsOffset)?.bytes
+            ?: throw DecodeError("Network INI resource ${formatTgi(tgi)} contains an invalid QFS stream")
+    }
+
     override val backendName: String = "scdbpf"
 
     private val handler: ExceptionHandler = io.github.memo33.scdbpf.`package`.strategy().throwExceptions()
@@ -1100,52 +1108,44 @@ class ScdbpfAdapter : DbpfService {
     }
 
     override fun readIni(request: ReadIniRequest): ReadIniResult {
-        val file = File(request.path)
-        if (!file.exists()) {
-            throw PackageError("File not found: ${file.absolutePath}")
+        val dbpf = readPackage(request.path)
+        val entry = findEntry(dbpf, request.tgi)
+        val rawEntry = try {
+            entry.toRawEntry(handler) as RawEntry
+        } catch (exception: Exception) {
+            throw DecodeError("Failed to read Network INI resource ${formatTgi(request.tgi)}", exception)
         }
-        if (!file.isFile) {
-            throw InputError("Expected one INI file, not a directory: ${file.absolutePath}")
-        }
-        val text = file.readText(StandardCharsets.UTF_8)
-        return ReadIniResult(path = file.absolutePath, sections = parseIniSections(text), text = text)
+        val storedBytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        val textBytes = decodeTextEntryPayload(storedBytes, request.tgi)
+        return ReadIniResult(
+            path = File(request.path).absolutePath,
+            tgi = request.tgi,
+            compressed = rawEntry.compressed(),
+            size = textBytes.size,
+            text = String(textBytes, StandardCharsets.UTF_8),
+        )
     }
 
     override fun writeIni(request: WriteIniRequest): WriteIniResult {
-        if (request.sections.isEmpty()) {
-            throw InputError("sections must not be empty")
+        if (request.text.isEmpty()) {
+            throw InputError("text must not be empty")
         }
-        val seenNames = mutableSetOf<String?>()
-        request.sections.forEach { section ->
-            if (!seenNames.add(section.name)) {
-                throw InputError("Duplicate section '${section.name ?: ""}' in sections")
-            }
-        }
-        val outputFile = Path.of(request.outputPath).toAbsolutePath().normalize().toFile()
-        val fileExists = outputFile.exists()
-        if (!request.merge && fileExists && !request.overwrite) {
-            throw InputError(
-                "Output file already exists: ${outputFile.absolutePath}. " +
-                    "Set overwrite=true to replace it entirely, or merge=true to patch/append into it.",
-            )
-        }
-        outputFile.parentFile?.let { it.mkdirs() }
-
-        val text = if (request.merge && fileExists) {
-            val blocks = parseIniBlocks(outputFile.readText(StandardCharsets.UTF_8))
-            applyIniPatch(blocks, request.sections)
-            renderIniBlocks(blocks)
-        } else {
-            renderIniSections(request.sections)
-        }
-        Files.write(outputFile.toPath(), text.toByteArray(StandardCharsets.UTF_8))
-        val finalSections = parseIniSections(text)
-
+        val entry = BufferedEntry.apply(
+            domainToScTgi(request.tgi),
+            RawType.apply(request.text.toByteArray(StandardCharsets.UTF_8)),
+            request.compressed,
+        )
+        val (outputFile, entryCount) = writeDbpfPackage(
+            outputPath = request.outputPath,
+            overwrite = request.overwrite,
+            merge = request.merge,
+            newEntries = listOf(entry),
+        )
         return WriteIniResult(
             outputPath = outputFile.absolutePath,
-            sectionCount = finalSections.size,
-            entryCount = finalSections.sumOf { it.entries.size },
-            bytesWritten = Files.size(outputFile.toPath()),
+            tgi = request.tgi,
+            entryCount = entryCount,
+            bytesWritten = outputFile.length(),
         )
     }
 
@@ -1180,99 +1180,6 @@ class ScdbpfAdapter : DbpfService {
             throw InputError("Entry ${formatTgi(entry.tgi)} payloadBase64 is not valid base64")
         }
         return BufferedEntry.apply(domainToScTgi(entry.tgi), RawType.apply(bytes), compressed)
-    }
-
-    private val iniSectionPattern = Regex("""^\[(.*)]$""")
-
-    private fun parseIniSections(text: String): List<IniSection> {
-        val sections = mutableListOf<IniSection>()
-        var currentName: String? = null
-        var currentEntries = mutableListOf<IniEntry>()
-        fun flush() {
-            if (currentName != null || currentEntries.isNotEmpty()) {
-                sections += IniSection(currentName, currentEntries.toList())
-            }
-        }
-        for (rawLine in text.split("\r\n", "\r", "\n")) {
-            val trimmed = rawLine.trim()
-            if (trimmed.isEmpty() || trimmed.startsWith(";") || trimmed.startsWith("#")) {
-                continue
-            }
-            val sectionMatch = iniSectionPattern.find(trimmed)
-            if (sectionMatch != null) {
-                flush()
-                currentName = sectionMatch.groupValues[1].trim()
-                currentEntries = mutableListOf()
-                continue
-            }
-            val separatorIndex = trimmed.indexOf('=')
-            if (separatorIndex < 0) {
-                continue
-            }
-            currentEntries += IniEntry(
-                key = trimmed.substring(0, separatorIndex).trim(),
-                value = trimmed.substring(separatorIndex + 1).trim(),
-            )
-        }
-        flush()
-        return sections
-    }
-
-    private fun renderIniSections(sections: List<IniSection>): String {
-        val builder = StringBuilder()
-        sections.forEach { section ->
-            section.name?.let { builder.append('[').append(it).append("]\n") }
-            section.entries.forEach { entry -> builder.append(entry.key).append('=').append(entry.value).append('\n') }
-            builder.append('\n')
-        }
-        return builder.toString()
-    }
-
-    private class IniBlock(val name: String?, val headerLine: String?, val bodyLines: MutableList<String>)
-
-    private fun parseIniBlocks(text: String): MutableList<IniBlock> {
-        val blocks = mutableListOf<IniBlock>()
-        var current = IniBlock(null, null, mutableListOf())
-        for (rawLine in text.split("\r\n", "\r", "\n")) {
-            val sectionMatch = iniSectionPattern.find(rawLine.trim())
-            if (sectionMatch != null) {
-                blocks += current
-                current = IniBlock(sectionMatch.groupValues[1].trim(), rawLine, mutableListOf())
-            } else {
-                current.bodyLines += rawLine
-            }
-        }
-        blocks += current
-        return blocks
-    }
-
-    private fun applyIniPatch(blocks: MutableList<IniBlock>, patchSections: List<IniSection>) {
-        for (section in patchSections) {
-            val block = blocks.firstOrNull { it.name == section.name } ?: IniBlock(
-                section.name,
-                section.name?.let { "[$it]" },
-                mutableListOf(),
-            ).also { blocks += it }
-            for (entry in section.entries) {
-                val keyRegex = Regex("^\\s*" + Regex.escape(entry.key) + "\\s*=")
-                val lineIndex = block.bodyLines.indexOfFirst { keyRegex.containsMatchIn(it) }
-                val newLine = "${entry.key}=${entry.value}"
-                if (lineIndex >= 0) {
-                    block.bodyLines[lineIndex] = newLine
-                } else {
-                    block.bodyLines += newLine
-                }
-            }
-        }
-    }
-
-    private fun renderIniBlocks(blocks: List<IniBlock>): String {
-        val builder = StringBuilder()
-        blocks.forEach { block ->
-            block.headerLine?.let { builder.append(it).append('\n') }
-            block.bodyLines.forEach { line -> builder.append(line).append('\n') }
-        }
-        return builder.toString()
     }
 
     private fun buildBufferedExemplarEntry(

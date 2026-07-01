@@ -1,6 +1,6 @@
 # dbpf-mcp
 
-`dbpf-mcp` is a Kotlin/JVM Model Context Protocol server for reading and writing SimCity 4 DBPF packages. It exposes tools for listing package entries, indexing Plugins folders, decoding common SC4 resource types, exporting decoded resources to text or image files, and creating/patching new DBPF packages (exemplars, cohorts, LTEXT, FSH textures, and raw entries), plus reading/writing plain INI configuration files.
+`dbpf-mcp` is a Kotlin/JVM Model Context Protocol server for reading and writing SimCity 4 DBPF packages. It exposes tools for listing package entries, indexing Plugins folders, decoding common SC4 resource types, exporting decoded resources to text or image files, and creating/patching new DBPF packages (exemplars, cohorts, LTEXT, FSH textures, Network INI resources, and raw entries).
 
 The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 
@@ -17,7 +17,7 @@ The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 - Decode LTEXT, S3D metadata, FSH metadata, image entries, and raw entry previews.
 - Export selected FSH bitmap images as PNG files.
 - Decode individual exemplar property values for quick property interpretation.
-- Read a plain filesystem INI file (`read_ini`) into structured sections/keys plus raw text. Not a DBPF format; useful for mod configuration files.
+- Read a Network INI resource (`read_ini`) from a DBPF package by TGI, including QFS-compressed entries such as `00000000-8A5971C5-8A5993B9`.
 
 ### Write
 
@@ -25,9 +25,9 @@ The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 - `write_ltext`: create a DBPF package with new LTEXT (localizable text) entries.
 - `write_fsh`: create a DBPF package with new FSH texture entries encoded from PNG images. Supports Dxt1, Dxt3, A8R8G8B8, A0R8G8B8, A1R5G5B5, A0R5G6B5, A4R4G4B4, multiple elements per entry, and caller-supplied mip chains. Dxt5 encoding is not supported by the bundled scdbpf version (decoding Dxt5 via `read_fsh`/`export_fsh_png` is unaffected).
 - `write_raw_entries`: write arbitrary bytes to any TGI with no format decoding, for entry kinds without a dedicated encoder (KEYCFG, TAB, RUL, EFFDIR, PNG, etc.).
-- `write_ini`: write or patch a plain filesystem INI file. `merge: true` updates matching `[section]` keys in place and appends new sections/keys while preserving everything else (comments, formatting, unrelated keys) byte-for-byte.
+- `write_ini`: install exact Network INI text at a caller-specified TGI in a new or existing DBPF package. `merge: true` preserves unrelated package entries and replaces the matching TGI.
 
-All write tools accept `outputPath`, `overwrite` (replace an existing file entirely), and `merge` (patch: keep existing entries/lines not addressed by the request, replace/append the rest by TGI or key). DBPF write tools also accept `compressed` (QFS-compress new entries, default true) and reject duplicate TGIs within one request.
+All write tools accept `outputPath`, `overwrite` (replace an existing file entirely), and `merge` (keep existing entries not addressed by the request and replace/append by TGI). DBPF write tools also accept `compressed` (QFS-compress new entries, default true) and reject duplicate TGIs within one request.
 
 Experimental tools:
 
@@ -117,7 +117,7 @@ Typical workflow:
 4. Use focused readers such as `read_exemplar`, `read_cohort`, `read_sc4paths`, `read_fsh`, `read_s3d`, or `read_ltext`.
 5. Use export tools such as `export_exemplar_text`, `export_cohort_text`, `export_sc4paths_text`, `export_sc4paths_json`, or `export_fsh_png` when you want files written to disk.
 6. Use write tools such as `write_exemplars`, `write_ltext`, `write_fsh`, or `write_raw_entries` to create a new `.dat`, or pass `merge: true` to patch entries into an existing one.
-7. Use `read_ini` / `write_ini` for plain filesystem INI configuration files (not DBPF packages).
+7. Use `read_ini` / `write_ini` for Network INI text stored directly in DBPF entries.
 
 TGI arguments can be supplied either as one string:
 
@@ -153,7 +153,7 @@ or as separate `type`, `group`, and `instance` hex values.
 - `read_keycfg` and `read_tab_binary` are not finished.
 - `write_fsh` cannot encode Dxt5 (the bundled scdbpf version only supports Dxt5 decode) and does not generate mip levels automatically; callers must supply each mip image pre-downscaled.
 - `write_ltext` always encodes UTF-16 LTEXT; other LTEXT formats are not selectable in the bundled scdbpf version.
-- `write_ini` merge matches keys by exact, case-sensitive text; it does not normalize or dedupe keys within a section.
+- `write_ini` stores the supplied text exactly; it does not parse, normalize, reorder, or deduplicate Network INI rules.
 
 ## Common commands
 

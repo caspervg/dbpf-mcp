@@ -519,33 +519,26 @@ data class WriteFshResult(
 )
 
 @Serializable
-data class IniEntry(
-    val key: String,
-    val value: String,
-)
-
-@Serializable
-data class IniSection(
-    val name: String? = null,
-    val entries: List<IniEntry>,
-)
-
-@Serializable
 data class ReadIniRequest(
     val path: String,
+    val tgi: Tgi,
 )
 
 @Serializable
 data class ReadIniResult(
     val path: String,
-    val sections: List<IniSection>,
+    val tgi: Tgi,
+    val compressed: Boolean,
+    val size: Int,
     val text: String,
 )
 
 @Serializable
 data class WriteIniRequest(
     val outputPath: String,
-    val sections: List<IniSection>,
+    val tgi: Tgi,
+    val text: String,
+    val compressed: Boolean = true,
     val overwrite: Boolean = false,
     val merge: Boolean = false,
 )
@@ -553,7 +546,7 @@ data class WriteIniRequest(
 @Serializable
 data class WriteIniResult(
     val outputPath: String,
-    val sectionCount: Int,
+    val tgi: Tgi,
     val entryCount: Int,
     val bytesWritten: Long,
 )

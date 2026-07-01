@@ -46,8 +46,6 @@ import com.github.caspervg.dbpfmcp.core.FshElementInput
 import com.github.caspervg.dbpfmcp.core.FshWriteEntry
 import com.github.caspervg.dbpfmcp.core.WriteFshRequest
 import com.github.caspervg.dbpfmcp.core.WriteFshResult
-import com.github.caspervg.dbpfmcp.core.IniEntry
-import com.github.caspervg.dbpfmcp.core.IniSection
 import com.github.caspervg.dbpfmcp.core.ReadIniRequest
 import com.github.caspervg.dbpfmcp.core.ReadIniResult
 import com.github.caspervg.dbpfmcp.core.WriteIniRequest
@@ -769,7 +767,7 @@ fun main(): Unit = runBlocking {
         }
         addTool(
             name = "read_ini",
-            description = "Read a plain filesystem INI file (not a DBPF package) into structured sections/keys plus raw text",
+            description = "Read a Network INI resource from a DBPF package by TGI as exact text",
             inputSchema = readIniInputSchema(),
             title = "Read INI",
             toolAnnotations = readOnlyToolAnnotations("Read INI"),
@@ -780,7 +778,7 @@ fun main(): Unit = runBlocking {
         }
         addTool(
             name = "write_ini",
-            description = "Write or patch a plain filesystem INI file (not a DBPF package) from structured sections/keys",
+            description = "Install exact Network INI text as an entry in a DBPF package",
             inputSchema = writeIniInputSchema(),
             title = "Write INI",
             toolAnnotations = writeToolAnnotations("Write INI"),
@@ -1333,30 +1331,22 @@ private fun parseRawWriteEntry(obj: JsonObject): RawWriteEntry =
         payloadBase64 = obj.requiredString("payloadBase64"),
     )
 
-private fun parseReadIniRequest(request: CallToolRequest): ReadIniRequest =
-    ReadIniRequest(path = request.arguments.requiredString("path"))
+private fun parseReadIniRequest(request: CallToolRequest): ReadIniRequest {
+    val (path, tgi) = parseReadEntryRequest(request)
+    return ReadIniRequest(path = path, tgi = tgi)
+}
 
 private fun parseWriteIniRequest(request: CallToolRequest): WriteIniRequest {
     val args = request.arguments
     return WriteIniRequest(
         outputPath = args.requiredString("outputPath"),
-        sections = args.requiredArray("sections").map { element -> parseIniSection(element.jsonObject) },
+        tgi = parseTgi(args.requiredString("tgi")),
+        text = args.requiredString("text"),
+        compressed = args.optionalBoolean("compressed") ?: true,
         overwrite = args.optionalBoolean("overwrite") ?: false,
         merge = args.optionalBoolean("merge") ?: false,
     )
 }
-
-private fun parseIniSection(obj: JsonObject): IniSection =
-    IniSection(
-        name = obj.optionalString("name"),
-        entries = obj.requiredArray("entries").map { element -> parseIniEntry(element.jsonObject) },
-    )
-
-private fun parseIniEntry(obj: JsonObject): IniEntry =
-    IniEntry(
-        key = obj.requiredString("key"),
-        value = obj.requiredString("value"),
-    )
 
 private fun parseReadEntryRequest(request: CallToolRequest): Pair<String, Tgi> {
     val args = request.arguments
@@ -1542,29 +1532,17 @@ private fun writeRawEntriesResultJson(result: WriteRawEntriesResult): JsonObject
     put("bytesWritten", result.bytesWritten)
 }
 
-private fun iniEntryJson(entry: IniEntry): JsonObject = buildJsonObject {
-    put("key", entry.key)
-    put("value", entry.value)
-}
-
-private fun iniSectionJson(section: IniSection): JsonObject = buildJsonObject {
-    put("name", section.name?.let(::JsonPrimitive) ?: JsonNull)
-    putJsonArray("entries") {
-        section.entries.forEach { add(iniEntryJson(it)) }
-    }
-}
-
 private fun readIniResultJson(result: ReadIniResult): JsonObject = buildJsonObject {
     put("path", result.path)
-    putJsonArray("sections") {
-        result.sections.forEach { add(iniSectionJson(it)) }
-    }
+    put("tgi", tgiJson(result.tgi))
+    put("compressed", result.compressed)
+    put("size", result.size)
     put("text", result.text)
 }
 
 private fun writeIniResultJson(result: WriteIniResult): JsonObject = buildJsonObject {
     put("outputPath", result.outputPath)
-    put("sectionCount", result.sectionCount)
+    put("tgi", tgiJson(result.tgi))
     put("entryCount", result.entryCount)
     put("bytesWritten", result.bytesWritten)
 }
@@ -2254,17 +2232,21 @@ private fun readIniInputSchema(): Tool.Input = Tool.Input(
     properties = buildJsonObject {
         putJsonObject("path") {
             put("type", "string")
-            put("description", "Filesystem path to a plain INI file. This is not a DBPF package.")
+            put("description", "Filesystem path to one DBPF package containing the Network INI resource.")
+        }
+        putJsonObject("tgi") {
+            put("type", "string")
+            put("description", "Full Network INI TGI as hexadecimal type-group-instance.")
         }
     },
-    required = listOf("path"),
+    required = listOf("path", "tgi"),
 )
 
 private fun writeIniInputSchema(): Tool.Input = Tool.Input(
     properties = buildJsonObject {
         putJsonObject("outputPath") {
             put("type", "string")
-            put("description", "Filesystem path where the INI file will be written. This is not a DBPF package.")
+            put("description", "Filesystem path where the DBPF package will be written.")
         }
         putJsonObject("overwrite") {
             put("type", "boolean")
@@ -2274,47 +2256,24 @@ private fun writeIniInputSchema(): Tool.Input = Tool.Input(
             put("type", "boolean")
             put(
                 "description",
-                "Patch mode: if outputPath already exists, update matching [section] keys in place and append " +
-                    "new sections/keys at the end, preserving all other lines (comments, formatting, unrelated " +
-                    "keys) as-is. Key matching is exact (case-sensitive). Default: false.",
+                "Patch package mode: if outputPath exists, preserve all other DBPF entries and replace or append " +
+                    "this entry by TGI. Default: false.",
             )
         }
-        putJsonObject("sections") {
-            put("type", "array")
-            put(
-                "description",
-                "One or more sections to write. Use name=null (or omit name) for entries that appear before any " +
-                    "[section] header.",
-            )
-            putJsonObject("items") {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("name") {
-                        put("type", "string")
-                        put("description", "Section name without brackets, for example NetworkOverrides. Omit for the unheaded preamble section.")
-                    }
-                    putJsonObject("entries") {
-                        put("type", "array")
-                        putJsonObject("items") {
-                            put("type", "object")
-                            putJsonObject("properties") {
-                                putJsonObject("key") { put("type", "string") }
-                                putJsonObject("value") { put("type", "string") }
-                            }
-                            putJsonArray("required") {
-                                add(JsonPrimitive("key"))
-                                add(JsonPrimitive("value"))
-                            }
-                        }
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("entries"))
-                }
-            }
+        putJsonObject("compressed") {
+            put("type", "boolean")
+            put("description", "Store the Network INI entry QFS-compressed. Default: true.")
+        }
+        putJsonObject("tgi") {
+            put("type", "string")
+            put("description", "Full Network INI TGI as hexadecimal type-group-instance.")
+        }
+        putJsonObject("text") {
+            put("type", "string")
+            put("description", "Exact Network INI text; ordering, duplicate keys, comments, and line content are preserved.")
         }
     },
-    required = listOf("outputPath", "sections"),
+    required = listOf("outputPath", "tgi", "text"),
 )
 
 private fun describePropertyInputSchema(): Tool.Input = Tool.Input(
