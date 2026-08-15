@@ -12,7 +12,6 @@ import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
 import com.github.caspervg.dbpfmcp.core.SearchIndexResult
 import com.github.caspervg.dbpfmcp.core.Tgi
 import com.github.caspervg.dbpfmcp.semantics.EXEMPLAR_TYPE_PROPERTY_ID
-import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
 import com.github.caspervg.dbpfmcp.semantics.exemplarTypeLabel
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.kindForType
@@ -447,7 +446,6 @@ internal class ScdbpfPluginIndexer {
             .take(24)
         return cacheRoot.resolve("$digest.jsonl")
     }
-
 }
 
 private data class IndexedExemplarHint(

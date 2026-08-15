@@ -54,7 +54,7 @@ object LegacyEncoders {
                         put("text", value.text?.let(::JsonPrimitive) ?: JsonNull)
                         put("boolean", value.boolean?.let(::JsonPrimitive) ?: JsonNull)
                         put("label", value.label?.let(::JsonPrimitive) ?: JsonNull)
-                    }
+                    },
                 )
             }
         }
@@ -118,7 +118,7 @@ object LegacyEncoders {
                     buildJsonObject {
                         put("name", field.name)
                         put("value", field.value)
-                    }
+                    },
                 )
             }
         }
@@ -130,7 +130,7 @@ object LegacyEncoders {
                         put("tgi", relationship.tgi?.let(::tgiJson) ?: JsonNull)
                         put("label", relationship.label?.let(::JsonPrimitive) ?: JsonNull)
                         put("resolved", relationship.resolved?.let(::JsonPrimitive) ?: JsonNull)
-                    }
+                    },
                 )
             }
         }

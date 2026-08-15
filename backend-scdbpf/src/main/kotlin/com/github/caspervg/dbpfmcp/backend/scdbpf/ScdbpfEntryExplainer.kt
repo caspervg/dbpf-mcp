@@ -8,32 +8,15 @@ import com.github.caspervg.dbpfmcp.core.ExplanationField
 import com.github.caspervg.dbpfmcp.core.ExplanationRelationship
 import com.github.caspervg.dbpfmcp.core.KnownEntryKind
 import com.github.caspervg.dbpfmcp.core.Tgi
-import com.github.caspervg.dbpfmcp.semantics.EXEMPLAR_TYPE_PROPERTY_ID
-import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
 import com.github.caspervg.dbpfmcp.semantics.exemplarTypeLabel
-import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.kindForType
 import com.github.caspervg.dbpfmcp.semantics.objectClassFor
 import com.github.caspervg.dbpfmcp.semantics.resourceKeyPropertyIds
 import com.github.caspervg.dbpfmcp.semantics.resourceKeysFrom
-import io.github.memo33.passera.unsigned.UInt
-import io.github.memo33.passera.unsigned.UShort
-import io.github.memo33.scdbpf.BufferedEntry
-import io.github.memo33.scdbpf.DbpfFile
-import io.github.memo33.scdbpf.DbpfProperty
-import io.github.memo33.scdbpf.DbpfType
 import io.github.memo33.scdbpf.Exemplar
-import io.github.memo33.scdbpf.Fsh
-import io.github.memo33.scdbpf.LText
 import io.github.memo33.scdbpf.RawEntry
-import io.github.memo33.scdbpf.S3d
-import io.github.memo33.scdbpf.Sc4Path
 import io.github.memo33.scdbpf.StreamedEntry
-import io.github.memo33.scdbpf.Tgi as ScTgi
-import io.github.memo33.scdbpf.compat.ExceptionHandler
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -163,7 +146,9 @@ internal class ScdbpfEntryExplainer {
     private fun explainS3d(path: String, entry: StreamedEntry, tgi: Tgi): ExplainEntryResult {
         val s3d = decodeS3dEntry(entry).content()
         val vertCount = CollectionConverters.asJava(s3d.vert()).sumOf { CollectionConverters.asJava(it).size }
-        val materialCount = CollectionConverters.asJava(s3d.mats()).sumOf { CollectionConverters.asJava(it.materials()).size }
+        val materialCount = CollectionConverters.asJava(s3d.mats()).sumOf {
+            CollectionConverters.asJava(it.materials()).size
+        }
         return ExplainEntryResult(
             packagePath = File(path).absolutePath,
             tgi = tgi,
@@ -287,5 +272,4 @@ internal class ScdbpfEntryExplainer {
             if (mask and 0x20 != 0) add("E")
         }.joinToString("+")
     }
-
 }

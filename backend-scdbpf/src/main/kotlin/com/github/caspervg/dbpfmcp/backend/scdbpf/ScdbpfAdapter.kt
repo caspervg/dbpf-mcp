@@ -1,59 +1,76 @@
 package com.github.caspervg.dbpfmcp.backend.scdbpf
 
 import com.github.caspervg.dbpfmcp.core.CohortModel
-import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
-import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
-import com.github.caspervg.dbpfmcp.core.DecodedPropertyModel
-import com.github.caspervg.dbpfmcp.core.DescribePropertyRequest
 import com.github.caspervg.dbpfmcp.core.DbpfService
 import com.github.caspervg.dbpfmcp.core.DecodeError
+import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
+import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
+import com.github.caspervg.dbpfmcp.core.DecodedPropertyModel
+import com.github.caspervg.dbpfmcp.core.DescribePropertyRequest
 import com.github.caspervg.dbpfmcp.core.EntrySummary
-import com.github.caspervg.dbpfmcp.core.ExportedFileModel
 import com.github.caspervg.dbpfmcp.core.ExemplarModel
 import com.github.caspervg.dbpfmcp.core.ExemplarProperty
+import com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput
+import com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry
+import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
+import com.github.caspervg.dbpfmcp.core.ExplainEntryResult
 import com.github.caspervg.dbpfmcp.core.ExportCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportFshPngRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsJsonRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsTextRequest
-import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
-import com.github.caspervg.dbpfmcp.core.ExplainEntryResult
+import com.github.caspervg.dbpfmcp.core.ExportedFileModel
+import com.github.caspervg.dbpfmcp.core.FshElementInput
 import com.github.caspervg.dbpfmcp.core.FshElementSummary
 import com.github.caspervg.dbpfmcp.core.FshImageSummary
 import com.github.caspervg.dbpfmcp.core.FshModel
+import com.github.caspervg.dbpfmcp.core.FshWriteEntry
 import com.github.caspervg.dbpfmcp.core.ImageEntryModel
 import com.github.caspervg.dbpfmcp.core.IndexPluginsRequest
 import com.github.caspervg.dbpfmcp.core.IndexPluginsResult
 import com.github.caspervg.dbpfmcp.core.IndexStatusRequest
 import com.github.caspervg.dbpfmcp.core.IndexStatusResult
+import com.github.caspervg.dbpfmcp.core.InputError
 import com.github.caspervg.dbpfmcp.core.InspectPackageRequest
 import com.github.caspervg.dbpfmcp.core.InspectPackageResult
-import com.github.caspervg.dbpfmcp.core.InputError
 import com.github.caspervg.dbpfmcp.core.KeyCfgModel
 import com.github.caspervg.dbpfmcp.core.KnownEntryKind
 import com.github.caspervg.dbpfmcp.core.LTextModel
 import com.github.caspervg.dbpfmcp.core.ListEntriesRequest
 import com.github.caspervg.dbpfmcp.core.ListEntriesResult
 import com.github.caspervg.dbpfmcp.core.NotableEntry
+import com.github.caspervg.dbpfmcp.core.PackageError
 import com.github.caspervg.dbpfmcp.core.PackageKindSummary
 import com.github.caspervg.dbpfmcp.core.PackageSummary
-import com.github.caspervg.dbpfmcp.core.PackageError
 import com.github.caspervg.dbpfmcp.core.ParentChainItem
 import com.github.caspervg.dbpfmcp.core.PropertyDescription
 import com.github.caspervg.dbpfmcp.core.QfsDecodedModel
+import com.github.caspervg.dbpfmcp.core.RawEntryModel
+import com.github.caspervg.dbpfmcp.core.RawWriteEntry
 import com.github.caspervg.dbpfmcp.core.ReadCohortRequest
 import com.github.caspervg.dbpfmcp.core.ReadCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadFshRequest
 import com.github.caspervg.dbpfmcp.core.ReadImageEntryRequest
+import com.github.caspervg.dbpfmcp.core.ReadIniRequest
+import com.github.caspervg.dbpfmcp.core.ReadIniResult
 import com.github.caspervg.dbpfmcp.core.ReadKeyCfgRequest
 import com.github.caspervg.dbpfmcp.core.ReadLTextRequest
+import com.github.caspervg.dbpfmcp.core.ReadRawEntryRequest
 import com.github.caspervg.dbpfmcp.core.ReadS3dRequest
 import com.github.caspervg.dbpfmcp.core.ReadSC4PathsRequest
 import com.github.caspervg.dbpfmcp.core.ReadTabBinaryRequest
-import com.github.caspervg.dbpfmcp.core.RawEntryModel
-import com.github.caspervg.dbpfmcp.core.ReadRawEntryRequest
+import com.github.caspervg.dbpfmcp.core.S3dAnimGroupSummary
+import com.github.caspervg.dbpfmcp.core.S3dIndxGroupSummary
+import com.github.caspervg.dbpfmcp.core.S3dMaterialSummary
+import com.github.caspervg.dbpfmcp.core.S3dMatsGroupSummary
+import com.github.caspervg.dbpfmcp.core.S3dModel
+import com.github.caspervg.dbpfmcp.core.S3dPrimGroupSummary
+import com.github.caspervg.dbpfmcp.core.S3dPrimSummary
+import com.github.caspervg.dbpfmcp.core.S3dPropSummary
+import com.github.caspervg.dbpfmcp.core.S3dRegpSummary
+import com.github.caspervg.dbpfmcp.core.S3dVertGroupSummary
 import com.github.caspervg.dbpfmcp.core.SC4PathCoordinate
 import com.github.caspervg.dbpfmcp.core.SC4PathRecord
 import com.github.caspervg.dbpfmcp.core.SC4PathsModel
@@ -61,44 +78,26 @@ import com.github.caspervg.dbpfmcp.core.SC4StopPathRecord
 import com.github.caspervg.dbpfmcp.core.Sc4ObjectHint
 import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
 import com.github.caspervg.dbpfmcp.core.SearchIndexResult
-import com.github.caspervg.dbpfmcp.core.S3dAnimGroupSummary
-import com.github.caspervg.dbpfmcp.core.S3dIndxGroupSummary
-import com.github.caspervg.dbpfmcp.core.S3dMatsGroupSummary
-import com.github.caspervg.dbpfmcp.core.S3dMaterialSummary
-import com.github.caspervg.dbpfmcp.core.S3dModel
-import com.github.caspervg.dbpfmcp.core.S3dPrimGroupSummary
-import com.github.caspervg.dbpfmcp.core.S3dPrimSummary
-import com.github.caspervg.dbpfmcp.core.S3dPropSummary
-import com.github.caspervg.dbpfmcp.core.S3dRegpSummary
-import com.github.caspervg.dbpfmcp.core.S3dVertGroupSummary
 import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.TabBinaryModel
-import com.github.caspervg.dbpfmcp.core.Tgi
 import com.github.caspervg.dbpfmcp.core.TextEntryModel
-import com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput
-import com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry
+import com.github.caspervg.dbpfmcp.core.Tgi
 import com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest
 import com.github.caspervg.dbpfmcp.core.WriteExemplarsResult
-import com.github.caspervg.dbpfmcp.core.LTextWriteEntry
-import com.github.caspervg.dbpfmcp.core.WriteLTextRequest
-import com.github.caspervg.dbpfmcp.core.WriteLTextResult
-import com.github.caspervg.dbpfmcp.core.FshElementInput
-import com.github.caspervg.dbpfmcp.core.FshWriteEntry
 import com.github.caspervg.dbpfmcp.core.WriteFshRequest
 import com.github.caspervg.dbpfmcp.core.WriteFshResult
-import com.github.caspervg.dbpfmcp.core.ReadIniRequest
-import com.github.caspervg.dbpfmcp.core.ReadIniResult
 import com.github.caspervg.dbpfmcp.core.WriteIniRequest
 import com.github.caspervg.dbpfmcp.core.WriteIniResult
-import com.github.caspervg.dbpfmcp.core.RawWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteLTextRequest
+import com.github.caspervg.dbpfmcp.core.WriteLTextResult
 import com.github.caspervg.dbpfmcp.core.WriteRawEntriesRequest
 import com.github.caspervg.dbpfmcp.core.WriteRawEntriesResult
 import com.github.caspervg.dbpfmcp.semantics.EXEMPLAR_TYPE_PROPERTY_ID
-import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
 import com.github.caspervg.dbpfmcp.semantics.canonicalPropertyType
 import com.github.caspervg.dbpfmcp.semantics.decodePropertyValue
 import com.github.caspervg.dbpfmcp.semantics.describeProperty
+import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.isTransitEnabled
 import com.github.caspervg.dbpfmcp.semantics.kindForType
 import com.github.caspervg.dbpfmcp.semantics.maybeExemplarName
@@ -111,55 +110,52 @@ import io.github.memo33.passera.unsigned.UByte
 import io.github.memo33.passera.unsigned.UInt
 import io.github.memo33.passera.unsigned.UShort
 import io.github.memo33.scdbpf.BufferedEntry
-import io.github.memo33.scdbpf.DbpfType
 import io.github.memo33.scdbpf.DbpfFile
 import io.github.memo33.scdbpf.DbpfProperty
+import io.github.memo33.scdbpf.DbpfType
 import io.github.memo33.scdbpf.Exemplar
 import io.github.memo33.scdbpf.Fsh
 import io.github.memo33.scdbpf.LText
 import io.github.memo33.scdbpf.RawEntry
 import io.github.memo33.scdbpf.RawType
-import io.github.memo33.scdbpf.S3d
 import io.github.memo33.scdbpf.Sc4Path
 import io.github.memo33.scdbpf.StreamedEntry
-import io.github.memo33.scdbpf.Tgi as ScTgi
-import io.github.memo33.scdbpf.`DbpfFile$` as ScDbpfFileObject
-import io.github.memo33.scdbpf.`Exemplar$` as ScExemplarObject
-import io.github.memo33.scdbpf.DbpfProperty.`ValueType$` as ScValueTypeObject
-import io.github.memo33.scdbpf.`DbpfProperty$ValueType$ValueType` as ScValueType
-import io.github.memo33.scdbpf.Fsh.`FshFormat$` as ScFshFormatObject
-import io.github.memo33.scdbpf.Fsh.`FshDirectoryId$` as ScFshDirIdObject
-import io.github.memo33.scdbpf.`Fsh$FshFormat$FshFmtVal` as ScFshFmtVal
-import io.github.memo33.scdbpf.`Fsh$FshDirectoryId$FshDirVal` as ScFshDirVal
-import io.github.memo33.scdbpf.compat.Input
-import io.github.memo33.scdbpf.compat.ExceptionHandler
 import io.github.memo33.scdbpf.compat.Image
+import io.github.memo33.scdbpf.compat.Input
 import io.github.memo33.scdbpf.compat.RGBA
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import scala.Tuple2
-import scala.Option as ScalaOption
 import scala.collection.IterableOnce
 import scala.collection.immutable.Map
 import scala.jdk.javaapi.CollectionConverters
-import java.io.File
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
 import javax.imageio.ImageIO
-import java.awt.image.BufferedImage
+import io.github.memo33.scdbpf.`DbpfFile$` as ScDbpfFileObject
+import io.github.memo33.scdbpf.`DbpfProperty$ValueType$ValueType` as ScValueType
+import io.github.memo33.scdbpf.DbpfProperty.`ValueType$` as ScValueTypeObject
+import io.github.memo33.scdbpf.`Exemplar$` as ScExemplarObject
+import io.github.memo33.scdbpf.`Fsh$FshDirectoryId$FshDirVal` as ScFshDirVal
+import io.github.memo33.scdbpf.`Fsh$FshFormat$FshFmtVal` as ScFshFmtVal
+import io.github.memo33.scdbpf.Fsh.`FshDirectoryId$` as ScFshDirIdObject
+import io.github.memo33.scdbpf.Fsh.`FshFormat$` as ScFshFormatObject
+import io.github.memo33.scdbpf.Tgi as ScTgi
+import scala.Option as ScalaOption
 
 class ScdbpfAdapter : DbpfService {
     override val backendName: String = "scdbpf"
@@ -249,7 +245,11 @@ class ScdbpfAdapter : DbpfService {
         val summaries = packageEntrySummaries(dbpf)
         val countsByKind = summaries.groupingBy { it.kind }.eachCount()
             .entries
-            .sortedWith(compareByDescending<kotlin.collections.Map.Entry<KnownEntryKind, Int>> { it.value }.thenBy { it.key.name })
+            .sortedWith(
+                compareByDescending<kotlin.collections.Map.Entry<KnownEntryKind, Int>> {
+                    it.value
+                }.thenBy { it.key.name },
+            )
             .map { PackageKindSummary(it.key, it.value) }
         val compressedCount = summaries.count { it.compressed == true }
         val topLabels = summaries.asSequence()
@@ -265,7 +265,11 @@ class ScdbpfAdapter : DbpfService {
         val warnings = mutableListOf<String>()
         val notableEntries = summaries.asSequence()
             .filter { it.kind != KnownEntryKind.UNKNOWN || it.label != null }
-            .sortedWith(compareBy<EntrySummary> { notablePriority(it.kind) }.thenBy { it.tgi.type }.thenBy { it.tgi.instance })
+            .sortedWith(
+                compareBy<EntrySummary> {
+                    notablePriority(it.kind)
+                }.thenBy { it.tgi.type }.thenBy { it.tgi.instance },
+            )
             .take(maxNotableEntries)
             .map {
                 NotableEntry(
@@ -1026,8 +1030,8 @@ class ScdbpfAdapter : DbpfService {
             if (image.width != expectedWidth || image.height != expectedHeight) {
                 throw InputError(
                     "FSH element image at mip $index on entry ${formatTgi(tgi)} is ${image.width}x${image.height}, " +
-                        "expected ${expectedWidth}x${expectedHeight} for a mip chain halving down from " +
-                        "${baseWidth}x${baseHeight} at mip 0",
+                        "expected ${expectedWidth}x$expectedHeight for a mip chain halving down from " +
+                        "${baseWidth}x$baseHeight at mip 0",
                 )
             }
             if (isDxt && (image.width % 4 != 0 || image.height % 4 != 0)) {
@@ -1192,6 +1196,7 @@ class ScdbpfAdapter : DbpfService {
             }
             Tuple2(UInt(property.id.toInt()), buildPropertyList(entry.tgi, property, validate, warnings))
         }
+
         @Suppress("UNCHECKED_CAST")
         val scalaProps = CollectionConverters.asScala(propTuples) as
             IterableOnce<Tuple2<UInt, DbpfProperty.PropertyList<*>>>
@@ -1234,11 +1239,15 @@ class ScdbpfAdapter : DbpfService {
         }
         return when (resolvedType) {
             "Uint8" -> wrapProperty(
-                property.values.map { UByte(requireRangedLong(it, property.id, tgi, 0, 0xFF, "Uint8").toInt().toByte()) },
+                property.values.map {
+                    UByte(requireRangedLong(it, property.id, tgi, 0, 0xFF, "Uint8").toInt().toByte())
+                },
                 ScValueTypeObject.`MODULE$`.Uint8(),
             )
             "Uint16" -> wrapProperty(
-                property.values.map { UShort(requireRangedLong(it, property.id, tgi, 0, 0xFFFF, "Uint16").toInt().toShort()) },
+                property.values.map {
+                    UShort(requireRangedLong(it, property.id, tgi, 0, 0xFFFF, "Uint16").toInt().toShort())
+                },
                 ScValueTypeObject.`MODULE$`.Uint16(),
             )
             "Uint32" -> wrapProperty(
@@ -1568,12 +1577,14 @@ class ScdbpfAdapter : DbpfService {
 
     private fun utf8Preview(bytes: ByteArray): String? =
         bytes.toString(StandardCharsets.UTF_8)
-            .takeIf { text -> text.isNotEmpty() && text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
+            .takeIf { text ->
+                text.isNotEmpty() && text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() }
+            }
 
     private fun readNativePngEntry(entry: StreamedEntry, tgi: Tgi): ImageEntryModel {
         val bytes = entryBytes(entry, tgi)
         val image: BufferedImage = ImageIO.read(ByteArrayInputStream(bytes))
-            ?: throw DecodeError("Failed to decode PNG ${tgi}: unsupported image data")
+            ?: throw DecodeError("Failed to decode PNG $tgi: unsupported image data")
         return ImageEntryModel(
             tgi = tgi,
             kind = kindForType(tgi.type),

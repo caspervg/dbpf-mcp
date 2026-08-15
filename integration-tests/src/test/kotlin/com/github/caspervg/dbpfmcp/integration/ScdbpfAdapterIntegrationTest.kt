@@ -1,59 +1,58 @@
 package com.github.caspervg.dbpfmcp.integration
 
 import com.github.caspervg.dbpfmcp.backend.scdbpf.ScdbpfAdapter
-import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
 import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
+import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
+import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
 import com.github.caspervg.dbpfmcp.core.ExportCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportFshPngRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsJsonRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsTextRequest
-import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
 import com.github.caspervg.dbpfmcp.core.IndexPluginsRequest
 import com.github.caspervg.dbpfmcp.core.IndexStatusRequest
-import com.github.caspervg.dbpfmcp.core.InspectPackageRequest
 import com.github.caspervg.dbpfmcp.core.InputError
+import com.github.caspervg.dbpfmcp.core.InspectPackageRequest
 import com.github.caspervg.dbpfmcp.core.KnownEntryKind
+import com.github.caspervg.dbpfmcp.core.ListEntriesRequest
 import com.github.caspervg.dbpfmcp.core.ReadCohortRequest
 import com.github.caspervg.dbpfmcp.core.ReadCohortTextRequest
-import com.github.caspervg.dbpfmcp.core.ListEntriesRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadFshRequest
 import com.github.caspervg.dbpfmcp.core.ReadImageEntryRequest
-import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.ReadLTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadRawEntryRequest
 import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
+import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.Tgi
 import io.github.memo33.passera.unsigned.UInt
 import io.github.memo33.scdbpf.BufferedEntry
-import io.github.memo33.scdbpf.`DbpfFile$` as ScDbpfFileObject
-import io.github.memo33.scdbpf.`DbpfProperty$` as ScDbpfPropertyObject
-import io.github.memo33.scdbpf.`Exemplar$` as ScExemplarObject
+import io.github.memo33.scdbpf.DbpfProperty
 import io.github.memo33.scdbpf.DbpfType
 import io.github.memo33.scdbpf.Exemplar
-import io.github.memo33.scdbpf.DbpfProperty
 import io.github.memo33.scdbpf.LText
 import io.github.memo33.scdbpf.RawEntry
 import io.github.memo33.scdbpf.RawType
-import io.github.memo33.scdbpf.Tgi as ScTgi
-import scala.Tuple2
+import org.junit.jupiter.api.io.TempDir
 import scala.Option
+import scala.Tuple2
 import scala.collection.IterableOnce
 import scala.jdk.javaapi.CollectionConverters
-import java.nio.file.Path
-import java.nio.charset.StandardCharsets
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
+import java.nio.file.Path
 import java.util.Base64
-import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import io.github.memo33.scdbpf.`DbpfFile$` as ScDbpfFileObject
+import io.github.memo33.scdbpf.`DbpfProperty$` as ScDbpfPropertyObject
+import io.github.memo33.scdbpf.`Exemplar$` as ScExemplarObject
+import io.github.memo33.scdbpf.Tgi as ScTgi
 
 class ScdbpfAdapterIntegrationTest {
     @TempDir
@@ -115,7 +114,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 kindFilter = com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR,
                 labelContains = "Exemplar",
-            )
+            ),
         )
         assertEquals(1, filteredListResult.entries.size)
 
@@ -123,7 +122,7 @@ class ScdbpfAdapterIntegrationTest {
             ReadExemplarRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x6534284AL, 0L, 0x12345678L),
-            )
+            ),
         )
         assertEquals("Spike Exemplar", exemplarResult.exemplarName)
         assertEquals(3, exemplarResult.properties.size)
@@ -136,7 +135,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 tgi = Tgi(0x6534284AL, 0L, 0x12345678L),
                 resolveParent = true,
-            )
+            ),
         )
         assertEquals(Tgi(0x05342861L, 0L, 0x12345679L), resolvedExemplarResult.parentCohort)
         assertEquals(1, resolvedExemplarResult.parentChain.size)
@@ -148,7 +147,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 tgi = Tgi(0x6534284AL, 0L, 0x12345678L),
                 maxBytes = 32,
-            )
+            ),
         )
         assertEquals(64, rawResult.payloadHexPreview.length)
         assertTrue(rawResult.payloadBase64.isNotBlank())
@@ -158,7 +157,7 @@ class ScdbpfAdapterIntegrationTest {
             ReadCohortRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x05342861L, 0L, 0x12345679L),
-            )
+            ),
         )
         assertEquals("Spike Exemplar", cohortResult.cohortName)
         assertEquals(3, cohortResult.properties.size)
@@ -167,7 +166,7 @@ class ScdbpfAdapterIntegrationTest {
             ReadLTextRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x2026960BL, 0L, 0x1234567AL),
-            )
+            ),
         )
         assertEquals("Hello LTEXT", ltextResult.text)
         assertEquals(11, ltextResult.length)
@@ -176,7 +175,7 @@ class ScdbpfAdapterIntegrationTest {
             ExplainEntryRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x6534284AL, 0L, 0x12345678L),
-            )
+            ),
         )
         assertEquals(com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR, exemplarExplanation.kind)
         assertTrue(exemplarExplanation.summary.contains("Spike Exemplar"))
@@ -187,29 +186,38 @@ class ScdbpfAdapterIntegrationTest {
             ExplainEntryRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x2026960BL, 0L, 0x1234567AL),
-            )
+            ),
         )
         assertEquals(com.github.caspervg.dbpfmcp.core.KnownEntryKind.LTEXT, ltextExplanation.kind)
         assertTrue(ltextExplanation.importantFields.any { it.name == "preview" && it.value == "Hello LTEXT" })
 
         val propertyDescription = adapter.describeProperty(
-            com.github.caspervg.dbpfmcp.core.DescribePropertyRequest(0x20)
+            com.github.caspervg.dbpfmcp.core.DescribePropertyRequest(0x20),
         )
         assertEquals("Exemplar Name", propertyDescription.name)
 
         val packageSummary = adapter.summarizePackage(SummarizePackageRequest(path = packagePath.toString()))
         assertEquals(3, packageSummary.entryCount)
-        assertEquals(true, packageSummary.countsByKind.any { it.kind == com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR && it.count == 1 })
+        assertEquals(
+            true,
+            packageSummary.countsByKind.any {
+                it.kind == com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR && it.count == 1
+            },
+        )
 
         val packageInspection = adapter.inspectPackage(
             InspectPackageRequest(
                 path = packagePath.toString(),
                 maxNotableEntries = 10,
                 maxObjectHints = 10,
-            )
+            ),
         )
         assertEquals(3, packageInspection.entryCount)
-        assertTrue(packageInspection.notableEntries.any { it.kind == com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR })
+        assertTrue(
+            packageInspection.notableEntries.any {
+                it.kind == com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR
+            },
+        )
         assertTrue(packageInspection.sc4ObjectHints.any { it.name == "Spike Exemplar" && it.exemplarType == "Network" })
         assertTrue(packageInspection.recommendedNextTools.contains("read_exemplar"))
 
@@ -217,7 +225,7 @@ class ScdbpfAdapterIntegrationTest {
             DecodePropertyValueRequest(
                 id = 0x00000010L,
                 values = listOf(kotlinx.serialization.json.JsonPrimitive("0x0000000B")),
-            )
+            ),
         )
         assertEquals("Exemplar Type", decodedProperty.property.name)
         assertEquals("Network", decodedProperty.values.first().label)
@@ -228,7 +236,7 @@ class ScdbpfAdapterIntegrationTest {
             DecodeQfsRequest(
                 payloadBase64 = Base64.getEncoder().encodeToString(qfsStream),
                 maxBytes = 16,
-            )
+            ),
         )
         assertEquals(3, qfsDecoded.decodedSize)
         assertTrue(qfsDecoded.hasDbpfSizePrefix)
@@ -238,7 +246,7 @@ class ScdbpfAdapterIntegrationTest {
             ReadExemplarTextRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x6534284AL, 0L, 0x12345678L),
-            )
+            ),
         )
         assertTrue(exemplarText.text.startsWith("EQZT1###"))
         assertTrue(exemplarText.text.contains("16:{\"Exemplar Type\"}=Uint32:0:{0x0000000B}"))
@@ -250,7 +258,7 @@ class ScdbpfAdapterIntegrationTest {
             ReadCohortTextRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x05342861L, 0L, 0x12345679L),
-            )
+            ),
         )
         assertTrue(cohortText.text.startsWith("CQZT1###"))
         val reparsedCohort = parseTextExemplar(cohortText.text, cohortTgi)
@@ -262,7 +270,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 tgi = Tgi(0x6534284AL, 0L, 0x12345678L),
                 outputPath = exemplarTextPath.toString(),
-            )
+            ),
         )
         assertTrue(exemplarExport.bytesWritten > 0)
         assertTrue(java.nio.file.Files.readString(exemplarTextPath).startsWith("EQZT1###"))
@@ -273,7 +281,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 tgi = Tgi(0x05342861L, 0L, 0x12345679L),
                 outputPath = cohortTextPath.toString(),
-            )
+            ),
         )
         assertTrue(cohortExport.bytesWritten > 0)
         assertTrue(java.nio.file.Files.readString(cohortTextPath).startsWith("CQZT1###"))
@@ -323,7 +331,7 @@ class ScdbpfAdapterIntegrationTest {
             com.github.caspervg.dbpfmcp.core.ReadSC4PathsRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x296678F7L, 0x69668828L, 0x03001A00L),
-            )
+            ),
         )
         assertEquals(1, sc4Paths.pathCount)
         assertEquals(1, sc4Paths.stopPathCount)
@@ -332,7 +340,7 @@ class ScdbpfAdapterIntegrationTest {
             com.github.caspervg.dbpfmcp.core.ReadSC4PathsRequest(
                 path = packagePath.toString(),
                 tgi = Tgi(0x296678F7L, 0x69668828L, 0x03001A00L),
-            )
+            ),
         )
         assertTrue(textModel.text.startsWith("SC4PATHS"))
 
@@ -342,7 +350,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 tgi = Tgi(0x296678F7L, 0x69668828L, 0x03001A00L),
                 outputPath = sc4PathsTextPath.toString(),
-            )
+            ),
         )
         assertTrue(textExport.bytesWritten > 0)
         assertTrue(java.nio.file.Files.readString(sc4PathsTextPath).startsWith("SC4PATHS"))
@@ -353,7 +361,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 tgi = Tgi(0x296678F7L, 0x69668828L, 0x03001A00L),
                 outputPath = sc4PathsJsonPath.toString(),
-            )
+            ),
         )
         assertTrue(jsonExport.bytesWritten > 0)
         assertTrue(java.nio.file.Files.readString(sc4PathsJsonPath).contains("\"pathCount\""))
@@ -364,7 +372,7 @@ class ScdbpfAdapterIntegrationTest {
                 path = packagePath.toString(),
                 tgi = Tgi(0x7AB50E44L, 0x1ABE787DL, 0x00000001L),
                 outputPath = pngPath.toString(),
-            )
+            ),
         )
         assertTrue(pngExport.bytesWritten > 0)
         val pngBytes = java.nio.file.Files.readAllBytes(pngPath)
@@ -411,7 +419,7 @@ class ScdbpfAdapterIntegrationTest {
             SearchIndexRequest(
                 rootPath = pluginsRoot.toString(),
                 query = "indexed network",
-            )
+            ),
         )
         assertEquals(1, nameSearch.totalMatches)
         assertEquals("Indexed Network Piece", nameSearch.matches.first().exemplarName)
@@ -422,7 +430,7 @@ class ScdbpfAdapterIntegrationTest {
                 kindFilter = KnownEntryKind.EXEMPLAR,
                 objectClass = "Network",
                 propertyId = 0x20L,
-            )
+            ),
         )
         assertEquals(1, filteredSearch.totalMatches)
         assertEquals(Tgi(0x6534284AL, 0L, 0x87654321L), filteredSearch.matches.first().tgi)
@@ -865,10 +873,12 @@ class ScdbpfAdapterIntegrationTest {
     private fun parseTextExemplar(text: String, tgi: ScTgi): Exemplar {
         val rawType = RawType.apply(text.toByteArray(StandardCharsets.US_ASCII))
         val entry = BufferedEntry.apply(tgi, rawType, false) as BufferedEntry<DbpfType>
-        return (entry.convert(
-            io.github.memo33.scdbpf.`package`.strategy().throwExceptions(),
-            ScExemplarObject.`MODULE$`.converter(),
-        ) as BufferedEntry<Exemplar>).content()
+        return (
+            entry.convert(
+                io.github.memo33.scdbpf.`package`.strategy().throwExceptions(),
+                ScExemplarObject.`MODULE$`.converter(),
+            ) as BufferedEntry<Exemplar>
+            ).content()
     }
 
     private fun tinyFshA8R8G8B8(): ByteArray {

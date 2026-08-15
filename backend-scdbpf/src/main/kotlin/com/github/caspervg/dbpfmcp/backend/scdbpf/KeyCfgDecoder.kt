@@ -7,7 +7,7 @@ import com.github.caspervg.dbpfmcp.core.KeyCfgTextFragment
 private val messageIdRegex = Regex("""(?:0x)?[0-9A-F]{7,8}""")
 private val quotedTextRegex = Regex(""""([^"]+)"""")
 private val keyCombinationRegex = Regex(
-    """(?i)\b(?:Control|Ctrl|Shift|Alt|F\d{1,2}|Numpad[0-9/*+\-]|PageUp|PageDown|Home|End|Left|Right|Up|Down|Escape|Space|Return|Enter|Tab|Pause|Break|ScrollLock|NumLock|CapsLock|Backspace|Insert|Delete|[A-Z0-9\[\]`~_\-=+\\|;:',<.>/?])(?:\s+(?:Control|Ctrl|Shift|Alt|up|down|F\d{1,2}|Numpad[0-9/*+\-]|PageUp|PageDown|Home|End|Left|Right|Up|Down|Escape|Space|Return|Enter|Tab|Pause|Break|ScrollLock|NumLock|CapsLock|Backspace|Insert|Delete|[A-Z0-9\[\]`~_\-=+\\|;:',<.>/?]))*\b"""
+    """(?i)\b(?:Control|Ctrl|Shift|Alt|F\d{1,2}|Numpad[0-9/*+\-]|PageUp|PageDown|Home|End|Left|Right|Up|Down|Escape|Space|Return|Enter|Tab|Pause|Break|ScrollLock|NumLock|CapsLock|Backspace|Insert|Delete|[A-Z0-9\[\]`~_\-=+\\|;:',<.>/?])(?:\s+(?:Control|Ctrl|Shift|Alt|up|down|F\d{1,2}|Numpad[0-9/*+\-]|PageUp|PageDown|Home|End|Left|Right|Up|Down|Escape|Space|Return|Enter|Tab|Pause|Break|ScrollLock|NumLock|CapsLock|Backspace|Insert|Delete|[A-Z0-9\[\]`~_\-=+\\|;:',<.>/?]))*\b""",
 )
 
 internal fun decodeKeyCfgPayload(

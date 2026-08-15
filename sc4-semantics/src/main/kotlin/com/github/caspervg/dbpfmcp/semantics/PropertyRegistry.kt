@@ -54,4 +54,3 @@ fun loadPropertyRegistry(input: InputStream): PropertyRegistry {
 
     return PropertyRegistry(properties)
 }
-

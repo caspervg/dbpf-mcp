@@ -106,7 +106,8 @@ internal data class ListEntriesArgs(
     @Description("Absolute path to one DBPF package file (.dat, .SC4Lot, .SC4Model, .SC4Desc).")
     val path: String,
     @Description("Maximum entries to return in this page.")
-    @MinInt(0) @MaxInt(MAX_LIST_LIMIT.toLong())
+    @MinInt(0)
+    @MaxInt(MAX_LIST_LIMIT.toLong())
     val limit: Int? = DEFAULT_LIST_LIMIT,
     @Description("Number of matching entries to skip before this page.")
     @MinInt(0)
@@ -151,10 +152,12 @@ internal data class InspectPackageArgs(
     @Description("Absolute path to one DBPF package file.")
     val path: String,
     @Description("Maximum notable entries to report.")
-    @MinInt(1) @MaxInt(200)
+    @MinInt(1)
+    @MaxInt(200)
     val maxNotableEntries: Int? = null,
     @Description("Maximum SC4 object hints to report.")
-    @MinInt(1) @MaxInt(200)
+    @MinInt(1)
+    @MaxInt(200)
     val maxObjectHints: Int? = null,
 ) {
     init {
@@ -212,7 +215,8 @@ internal data class SearchIndexArgs(
     @Pattern(regex = HEX32_PATTERN)
     val propertyIdHex: String? = null,
     @Description("Maximum matches to return in this page.")
-    @MinInt(1) @MaxInt(MAX_SEARCH_LIMIT.toLong())
+    @MinInt(1)
+    @MaxInt(MAX_SEARCH_LIMIT.toLong())
     val limit: Int? = DEFAULT_SEARCH_LIMIT,
     @Description("Number of matches to skip before this page.")
     @MinInt(0)
@@ -397,7 +401,8 @@ internal data class RawEntryArgs(
     @Pattern(regex = HEX32_PATTERN)
     override val instance: String? = null,
     @Description("Maximum bytes to return. Larger entries are truncated.")
-    @MinInt(1) @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
+    @MinInt(1)
+    @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
     val maxBytes: Int? = DEFAULT_RAW_MAX_BYTES,
 ) : TgiArguments {
     init {
@@ -421,7 +426,8 @@ internal data class KeyCfgArgs(
     @Pattern(regex = HEX32_PATTERN)
     override val instance: String? = null,
     @Description("Maximum decoded bytes to scan for text.")
-    @MinInt(1) @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
+    @MinInt(1)
+    @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
     val maxBytes: Int? = DEFAULT_KEYCFG_MAX_BYTES,
 ) : TgiArguments {
     init {
@@ -445,10 +451,12 @@ internal data class TabBinaryArgs(
     @Pattern(regex = HEX32_PATTERN)
     override val instance: String? = null,
     @Description("Maximum decoded bytes to inspect.")
-    @MinInt(1) @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
+    @MinInt(1)
+    @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
     val maxBytes: Int? = DEFAULT_TAB_MAX_BYTES,
     @Description("Maximum little-endian 32-bit words to report.")
-    @MinInt(1) @MaxInt(MAX_TAB_WORDS.toLong())
+    @MinInt(1)
+    @MaxInt(MAX_TAB_WORDS.toLong())
     val maxWords: Int? = DEFAULT_TAB_MAX_WORDS,
 ) : TgiArguments {
     init {
@@ -489,7 +497,8 @@ internal data class DecodeQfsArgs(
     @Description("Base64-encoded QFS/RefPack stream to decode.")
     val payloadBase64: String,
     @Description("Maximum decoded bytes to return.")
-    @MinInt(1) @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
+    @MinInt(1)
+    @MaxInt(MAX_ENTRY_PREVIEW_BYTES.toLong())
     val maxBytes: Int? = DEFAULT_RAW_MAX_BYTES,
     @Description("True when the payload begins with the 4-byte DBPF compressed-size prefix.")
     val hasDbpfSizePrefix: Boolean? = null,
@@ -568,7 +577,15 @@ internal data class ExemplarPropertyArgs(
 @Serializable
 @Suppress("EnumEntryName")
 internal enum class ExemplarPropertyType {
-    Uint8, Uint16, Uint32, Sint32, Sint64, Float32, Bool, String, Tgi
+    Uint8,
+    Uint16,
+    Uint32,
+    Sint32,
+    Sint64,
+    Float32,
+    Bool,
+    String,
+    Tgi,
 }
 
 @Serializable
@@ -651,7 +668,13 @@ internal data class WriteLTextArgs(
 @Serializable
 @Suppress("EnumEntryName")
 internal enum class FshFormatArg {
-    Dxt1, Dxt3, A8R8G8B8, A0R8G8B8, A1R5G5B5, A0R5G6B5, A4R4G4B4
+    Dxt1,
+    Dxt3,
+    A8R8G8B8,
+    A0R8G8B8,
+    A1R5G5B5,
+    A0R5G6B5,
+    A4R4G4B4,
 }
 
 @Serializable

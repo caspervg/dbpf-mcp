@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    api(libs.kotlinxSerialization)
     implementation(libs.bundles.common)
     testImplementation(platform(libs.junitBom))
     testImplementation(libs.junitJupiter)

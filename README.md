@@ -8,7 +8,7 @@ The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 
 ### Read
 
-- List and summarize DBPF package entries with stable TGI metadata.
+- List and summarize DBPF package entries with stable TGI metadata. `list_entries` reports both the package's total entry count and how many entries matched the filters, and flags when a page was truncated.
 - Inspect one package for notable entries, SC4 object hints, and recommended next tools.
 - Build a persistent metadata index for a Plugins folder, then search it without rescanning.
 - Decode exemplars and cohorts as semantic JSON with property names, type hints, decoded values, resource keys, and optional parent cohort resolution.
@@ -31,8 +31,11 @@ All write tools accept `outputPath`, `overwrite` (replace an existing file entir
 
 Experimental tools:
 
-- `read_keycfg`: heuristic decoder for KEYCFG/TAB-like text resources. It may return noisy fragments and may not reconstruct shortcut records.
+- `read_keycfg`: heuristic decoder for KEYCFG/TAB-like text resources. It recovers text fragments and may not reconstruct complete shortcut records.
 - `read_tab_binary`: structural binary probe for compiled TAB resources. It returns little-endian words and chunks, not a semantic TAB model.
+
+Both operate on the decoded entry payload. Earlier versions passed them the stored bytes without
+decompressing first, which is why their output used to contain QFS artefacts.
 
 ## Project structure
 
@@ -47,15 +50,26 @@ Experimental tools:
 
 - JDK 21 or a compatible Java toolchain.
 - The Gradle wrapper from this repository.
+- The `vendor/sc4-properties` git submodule (see Build & test below).
 - A local MCP client that can launch stdio servers.
 
 ## Build & test
 
-From the repository root:
+The SC4 property registry is a git submodule, and without it the server fails at runtime on the
+first property lookup. Fetch it before the first build:
+
+```sh
+git submodule update --init --recursive
+```
+
+(If you have not cloned yet, `git clone --recurse-submodules` does the same thing.)
+
+Then, from the repository root:
 
 ```sh
 ./gradlew build
 ./gradlew test
+./gradlew ktlintCheck
 ```
 
 Run only the MCP server module:
@@ -137,12 +151,30 @@ or as separate `type`, `group`, and `instance` hex values.
 
 `search_index` never recursively scans the folder. If `index_status` reports stale or missing files, run `index_plugins` again.
 
+`index_plugins` reuses an index that is still current for every package in the folder; pass
+`forceRefresh: true` to rebuild regardless. The cache is versioned and written atomically, so an
+index left behind by an interrupted run, or by an older release, is reported as needing a rebuild
+rather than failing every later call.
+
 ## Environment variables
 
 - `DBPF_MCP_INDEX_DIR`: overrides the directory used for persistent `index_plugins` JSONL cache files. By default, dbpf-mcp uses Java's `user.home` and appends `.cache/dbpf-mcp/indexes`. On Windows this is typically `C:\Users\<you>\.cache\dbpf-mcp\indexes`; on macOS/Linux this is typically `~/.cache/dbpf-mcp/indexes`.
 - `JAVA_HOME`: selects the JDK used by Gradle and the installed server launcher. Use a JDK 21-compatible installation.
 - `JAVA_OPTS`: optional JVM options used by the installed server launcher.
 - `GRADLE_OPTS`: optional JVM options used when launching through Gradle.
+
+## Tool schemas and output shape
+
+Every tool publishes both an `inputSchema` and an `outputSchema`, generated from the same Kotlin
+types used to decode arguments and encode results, so the published constraints cannot drift from
+the enforced ones. Argument bounds, enumerations, and hexadecimal formats are part of the schema
+rather than prose.
+
+Absent optional fields are omitted from responses rather than sent as explicit `null`s. TGI
+components and property IDs are hexadecimal strings (`"6534284A"`), not numbers.
+
+On failure a tool returns `isError: true` with an `error` message and no `structuredContent`,
+since an error payload would not satisfy the declared output schema.
 
 ## Limitations
 
@@ -158,10 +190,15 @@ or as separate `type`, `group`, and `instance` hex values.
 ## Common commands
 
 ```sh
+git submodule update --init --recursive
 ./gradlew build
 ./gradlew test
+./gradlew ktlintCheck
+./gradlew ktlintFormat
 ./gradlew :sc4-semantics:test
+./gradlew :backend-scdbpf:test
 ./gradlew :integration-tests:test
+./gradlew :mcp-server:test
 ./gradlew :mcp-server:run
 ./gradlew :mcp-server:installDist
 ```

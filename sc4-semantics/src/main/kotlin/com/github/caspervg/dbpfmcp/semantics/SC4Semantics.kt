@@ -7,14 +7,12 @@ import com.github.caspervg.dbpfmcp.core.KnownEntryKind
 import com.github.caspervg.dbpfmcp.core.PropertyDescription
 import com.github.caspervg.dbpfmcp.core.Tgi
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 object SC4TypeIds {
@@ -208,7 +206,12 @@ fun formatHex64(value: Long): String = com.github.caspervg.dbpfmcp.core.formatHe
 
 fun maybeExemplarName(propertyId: Long): Boolean = propertyId == 0x00000020L
 
-private fun decodeValue(index: Int, raw: JsonElement, expectedType: String?, propertyId: Long): DecodedPropertyValue = when (expectedType) {
+private fun decodeValue(
+    index: Int,
+    raw: JsonElement,
+    expectedType: String?,
+    propertyId: Long,
+): DecodedPropertyValue = when (expectedType) {
     "String" -> DecodedPropertyValue(
         index = index,
         raw = raw,
@@ -290,11 +293,14 @@ private fun semanticInterpretation(
             val group = chunk[1].decimal ?: 0L
             val instance = chunk[2].decimal ?: 0L
             buildJsonObject {
-                put("tgi", buildJsonObject {
-                    put("type", formatHex32(type))
-                    put("group", formatHex32(group))
-                    put("instance", formatHex32(instance))
-                })
+                put(
+                    "tgi",
+                    buildJsonObject {
+                        put("type", formatHex32(type))
+                        put("group", formatHex32(group))
+                        put("instance", formatHex32(instance))
+                    },
+                )
                 put("kind", kindForType(type).name)
             }
         }

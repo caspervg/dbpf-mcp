@@ -4,8 +4,8 @@ import com.github.caspervg.dbpfmcp.core.KnownEntryKind
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 
 class SC4SemanticsTest {
     @Test
@@ -57,7 +57,7 @@ class SC4SemanticsTest {
                 JsonPrimitive("0x5AD0E817"),
                 JsonPrimitive("0xBADB57F1"),
                 JsonPrimitive("0x0C006800"),
-            )
+            ),
         )
 
         assertNotNull(decoded)

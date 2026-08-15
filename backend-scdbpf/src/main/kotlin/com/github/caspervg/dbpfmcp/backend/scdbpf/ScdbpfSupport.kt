@@ -15,7 +15,6 @@ import io.github.memo33.scdbpf.LText
 import io.github.memo33.scdbpf.S3d
 import io.github.memo33.scdbpf.Sc4Path
 import io.github.memo33.scdbpf.StreamedEntry
-import io.github.memo33.scdbpf.Tgi as ScTgi
 import io.github.memo33.scdbpf.compat.ExceptionHandler
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -23,6 +22,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import scala.collection.immutable.Map
 import scala.jdk.javaapi.CollectionConverters
+import io.github.memo33.scdbpf.Tgi as ScTgi
 
 /**
  * Helpers shared by [ScdbpfAdapter], [ScdbpfPluginIndexer], and [ScdbpfEntryExplainer].
@@ -146,7 +146,7 @@ internal fun valueToJson(value: Any?): JsonElement = when (value) {
             JsonPrimitive(unsignedInt(value.tid())),
             JsonPrimitive(unsignedInt(value.gid())),
             JsonPrimitive(unsignedInt(value.iid())),
-        )
+        ),
     )
     else -> JsonPrimitive(value.toString())
 }

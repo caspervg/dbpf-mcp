@@ -10,7 +10,7 @@ class KeyCfgDecoderTest {
     @Test
     fun `decoder extracts candidate records from plop and paint sample`() {
         val bytes = Base64.getDecoder().decode(
-            "7wAAABD7AAEe6jsgQWRkaXRvbmFsIGtleWJvYXJkIHNob3J0Y3V0cyBmb3IgdGhlIA0KOyBTCgtlZegzRCBWaWV3IEtleUNvbmZpZyBmaWxlIGluIFNpbUNpdHlfMS4bO2RhdAAHB0FtYXTmZG9jdW1ldGF0aW9uLCBUR0kgMHhhMmUzZDUzMwELLOE2YTIzMWVhYQwL4jkzNjJlZi4NCg0KT45AACABJD3iOUYyMUMzQTEgIlRvAoRnZ+NMb3RQbG9wIFdpbmRvdyINk4A5CjDhOEI0QTdGMkUYOeFQcm9wUGFpbh89dGVy/A=="
+            "7wAAABD7AAEe6jsgQWRkaXRvbmFsIGtleWJvYXJkIHNob3J0Y3V0cyBmb3IgdGhlIA0KOyBTCgtlZegzRCBWaWV3IEtleUNvbmZpZyBmaWxlIGluIFNpbUNpdHlfMS4bO2RhdAAHB0FtYXTmZG9jdW1ldGF0aW9uLCBUR0kgMHhhMmUzZDUzMwELLOE2YTIzMWVhYQwL4jkzNjJlZi4NCg0KT45AACABJD3iOUYyMUMzQTEgIlRvAoRnZ+NMb3RQbG9wIFdpbmRvdyINk4A5CjDhOEI0QTdGMkUYOeFQcm9wUGFpbh89dGVy/A==",
         )
 
         val model = decodeKeyCfgPayload(

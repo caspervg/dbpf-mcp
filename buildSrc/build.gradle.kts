@@ -19,4 +19,6 @@ tasks.withType<KotlinJvmCompile>().configureEach {
 
 dependencies {
     implementation(libs.kotlinGradlePlugin)
+    // Applied by the shared convention plugin so every module is linted the same way.
+    implementation("org.jlleitschuh.gradle:ktlint-gradle:${libs.versions.ktlint.get()}")
 }

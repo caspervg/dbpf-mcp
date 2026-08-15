@@ -7,7 +7,6 @@ import io.github.memo33.passera.unsigned.UInt
 import io.github.memo33.passera.unsigned.UShort
 import io.github.memo33.scdbpf.DbpfProperty
 import io.github.memo33.scdbpf.Exemplar
-import io.github.memo33.scdbpf.Tgi
 import scala.jdk.javaapi.CollectionConverters
 import java.nio.charset.StandardCharsets
 
