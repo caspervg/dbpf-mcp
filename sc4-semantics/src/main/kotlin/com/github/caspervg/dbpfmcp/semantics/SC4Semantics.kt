@@ -186,14 +186,8 @@ fun decodePropertyValue(propertyId: Long, values: List<JsonElement>): DecodedPro
     )
 }
 
-fun parseHexId(value: String, fieldName: String): Long {
-    val normalized = value.trim().removePrefix("0x").removePrefix("0X")
-    if (normalized.isEmpty()) {
-        throw InputError("$fieldName must not be empty")
-    }
-    return normalized.toULongOrNull(16)?.toLong()
-        ?: throw InputError("Invalid hexadecimal value for $fieldName: $value")
-}
+fun parseHexId(value: String, fieldName: String): Long =
+    com.github.caspervg.dbpfmcp.core.parseHex(value, fieldName)
 
 fun parseTgi(text: String): Tgi {
     val parts = text.split('-', ':', '/').map(String::trim).filter(String::isNotEmpty)
@@ -207,16 +201,10 @@ fun parseTgi(text: String): Tgi {
     )
 }
 
-/**
- * Formats the low 32 bits of [value] as 8 uppercase hex digits.
- *
- * The mask matters for negative values: `padStart` cannot truncate, so without it a `Sint32`
- * property holding -1 rendered as the 16-digit "FFFFFFFFFFFFFFFF" in a field named for 32 bits.
- */
-fun formatHex32(value: Long): String =
-    (value and 0xFFFF_FFFFL).toString(16).uppercase().padStart(8, '0')
+/** Delegates to the canonical formatter in `core-api`, which the wire serializers also use. */
+fun formatHex32(value: Long): String = com.github.caspervg.dbpfmcp.core.formatHex32(value)
 
-fun formatHex64(value: Long): String = value.toULong().toString(16).uppercase().padStart(16, '0')
+fun formatHex64(value: Long): String = com.github.caspervg.dbpfmcp.core.formatHex64(value)
 
 fun maybeExemplarName(propertyId: Long): Boolean = propertyId == 0x00000020L
 

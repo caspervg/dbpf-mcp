@@ -11,11 +11,11 @@ dependencies {
     implementation(libs.bundles.common)
     implementation(libs.kotlinReflect)
     implementation(libs.mcpKotlinSdkServer)
-    implementation(platform("io.ktor:ktor-bom:3.2.3"))
-    implementation("io.ktor:ktor-server-core")
-    implementation("io.ktor:ktor-server-sse")
+    implementation(libs.toolSchema)
+    // The MCP SDK declares its ktor dependencies without versions, so this BOM is what makes them
+    // resolvable. It is not optional even though nothing here imports ktor directly.
+    implementation(platform(libs.ktorBom))
     runtimeOnly(libs.slf4jSimple)
-    runtimeOnly("io.ktor:ktor-server-websockets")
     testImplementation(platform(libs.junitBom))
     testImplementation(libs.junitJupiter)
     testImplementation(kotlin("test"))

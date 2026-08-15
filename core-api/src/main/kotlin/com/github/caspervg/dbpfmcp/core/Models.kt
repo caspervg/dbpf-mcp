@@ -5,9 +5,9 @@ import kotlinx.serialization.json.JsonElement
 
 @Serializable
 data class Tgi(
-    val type: Long,
-    val group: Long,
-    val instance: Long,
+    @Serializable(with = Hex32Serializer::class) val type: Long,
+    @Serializable(with = Hex32Serializer::class) val group: Long,
+    @Serializable(with = Hex32Serializer::class) val instance: Long,
 )
 
 @Serializable
@@ -37,7 +37,7 @@ data class EntrySummary(
 
 @Serializable
 data class ExemplarProperty(
-    val id: Long,
+    @Serializable(with = Hex32Serializer::class) val id: Long,
     val name: String? = null,
     val valueType: String,
     val expectedType: String? = null,
@@ -46,7 +46,6 @@ data class ExemplarProperty(
     val decodedValues: List<DecodedPropertyValue>? = null,
     val semanticType: String? = null,
     val interpretation: JsonElement? = null,
-    val rawHex: String? = null,
 )
 
 @Serializable
@@ -645,7 +644,7 @@ data class ExportedFileModel(
 
 @Serializable
 data class PropertyDescription(
-    val id: Long,
+    @Serializable(with = Hex32Serializer::class) val id: Long,
     val name: String,
     val type: String? = null,
     val description: String? = null,

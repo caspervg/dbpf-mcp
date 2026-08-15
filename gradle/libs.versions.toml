@@ -9,10 +9,12 @@ kotlinxDatetime = "0.7.1"
 kotlinxSerializationJSON = "1.9.0"
 kotlinxCoroutines = "1.10.2"
 junit = "5.13.4"
+ktor = "3.2.3"
 ksoup = "0.2.5"
 mcpKotlinSdk = "0.7.7"
 scdbpf = "0.2.0"
 slf4j = "2.0.17"
+toolSchema = "1.2.0"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -23,10 +25,15 @@ kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-j
 kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 junitBom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junitJupiter = { module = "org.junit.jupiter:junit-jupiter" }
+# Supplies versions for the ktor artifacts the MCP SDK depends on without declaring versions.
+ktorBom = { module = "io.ktor:ktor-bom", version.ref = "ktor" }
 ksoup = { module = "com.fleeksoft.ksoup:ksoup", version.ref = "ksoup" }
 mcpKotlinSdkServer = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcpKotlinSdk" }
 scdbpf = { module = "io.github.memo33:scdbpf_2.13", version.ref = "scdbpf" }
 slf4jSimple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+# Generates JSON Schema from kotlinx.serialization descriptors, so tool input/output schemas are
+# derived from the same types the codecs use instead of being hand-written per tool.
+toolSchema = { module = "com.xemantic.ai:xemantic-ai-tool-schema", version.ref = "toolSchema" }
 
 [bundles]
 common = ["kotlinxSerialization", "kotlinxCoroutines", "kotlinLogging"]
