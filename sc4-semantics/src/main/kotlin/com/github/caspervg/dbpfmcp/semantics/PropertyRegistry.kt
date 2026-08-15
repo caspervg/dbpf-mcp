@@ -45,7 +45,7 @@ fun loadPropertyRegistry(input: InputStream): PropertyRegistry {
             properties[id] = PropertyDefinition(
                 id = id,
                 name = property.attr("name").ifBlank { "Unnamed Property" },
-                type = normalizePropertyType(property.attr("type").ifBlank { null }),
+                type = canonicalPropertyType(property.attr("type").ifBlank { null }),
                 description = property.attr("desc").ifBlank { null },
                 group = groupName,
             )
@@ -55,14 +55,3 @@ fun loadPropertyRegistry(input: InputStream): PropertyRegistry {
     return PropertyRegistry(properties)
 }
 
-private fun normalizePropertyType(type: String?): String? = when (type?.trim()) {
-    null, "" -> null
-    "UInt32", "Uint32", "Unit 32", "Unit32" -> "Uint32"
-    "UInt8", "Uint8", "Unit8" -> "Uint8"
-    "Bool" -> "Bool"
-    "Float32" -> "Float32"
-    "Sint32" -> "Sint32"
-    "Sint64" -> "Sint64"
-    "String" -> "String"
-    else -> type.trim()
-}

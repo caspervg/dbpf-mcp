@@ -1,15 +1,21 @@
 package com.github.caspervg.dbpfmcp.backend.scdbpf
 
+import com.github.caspervg.dbpfmcp.core.DbpfException
+import com.github.caspervg.dbpfmcp.core.DecodeError
 import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
 import com.github.caspervg.dbpfmcp.core.ExplainEntryResult
 import com.github.caspervg.dbpfmcp.core.ExplanationField
 import com.github.caspervg.dbpfmcp.core.ExplanationRelationship
 import com.github.caspervg.dbpfmcp.core.KnownEntryKind
-import com.github.caspervg.dbpfmcp.core.PackageError
 import com.github.caspervg.dbpfmcp.core.Tgi
+import com.github.caspervg.dbpfmcp.semantics.EXEMPLAR_TYPE_PROPERTY_ID
 import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
+import com.github.caspervg.dbpfmcp.semantics.exemplarTypeLabel
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.kindForType
+import com.github.caspervg.dbpfmcp.semantics.objectClassFor
+import com.github.caspervg.dbpfmcp.semantics.resourceKeyPropertyIds
+import com.github.caspervg.dbpfmcp.semantics.resourceKeysFrom
 import io.github.memo33.passera.unsigned.UInt
 import io.github.memo33.passera.unsigned.UShort
 import io.github.memo33.scdbpf.BufferedEntry
@@ -38,21 +44,28 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 
 internal class ScdbpfEntryExplainer {
-    private val handler: ExceptionHandler = io.github.memo33.scdbpf.`package`.strategy().throwExceptions()
 
     fun explainEntry(request: ExplainEntryRequest): ExplainEntryResult {
         val dbpf = readPackage(request.path)
         val entry = findEntry(dbpf, request.tgi)
         val tgi = tgiToDomain(entry.tgi())
         val kind = kindForType(tgi.type)
-        return when (kind) {
-            KnownEntryKind.EXEMPLAR, KnownEntryKind.COHORT -> explainExemplarLike(request.path, entry, kind)
-            KnownEntryKind.LTEXT -> explainLText(request.path, entry, tgi)
-            KnownEntryKind.SC4PATHS -> explainSc4Paths(request.path, entry, tgi)
-            KnownEntryKind.S3D -> explainS3d(request.path, entry, tgi)
-            KnownEntryKind.FSH -> explainFsh(request.path, entry, tgi)
-            KnownEntryKind.PNG -> explainNativeImage(request.path, entry, tgi)
-            else -> explainRaw(request.path, entry, tgi, kind)
+        // Every branch below decodes entry content. Without this, a corrupt entry throws a raw
+        // scdbpf exception that reaches the server as an untyped, sometimes message-less error.
+        return try {
+            when (kind) {
+                KnownEntryKind.EXEMPLAR, KnownEntryKind.COHORT -> explainExemplarLike(request.path, entry, kind)
+                KnownEntryKind.LTEXT -> explainLText(request.path, entry, tgi)
+                KnownEntryKind.SC4PATHS -> explainSc4Paths(request.path, entry, tgi)
+                KnownEntryKind.S3D -> explainS3d(request.path, entry, tgi)
+                KnownEntryKind.FSH -> explainFsh(request.path, entry, tgi)
+                KnownEntryKind.PNG -> explainNativeImage(request.path, entry, tgi)
+                else -> explainRaw(request.path, entry, tgi, kind)
+            }
+        } catch (exception: DbpfException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw DecodeError("Failed to explain ${kind.name} entry ${formatTgi(tgi)}", exception)
         }
     }
 
@@ -200,8 +213,8 @@ internal class ScdbpfEntryExplainer {
         )
 
     private fun explainRaw(path: String, entry: StreamedEntry, tgi: Tgi, kind: KnownEntryKind): ExplainEntryResult {
-        val raw = entry.toRawEntry(handler) as RawEntry
-        val bytes = io.github.memo33.scdbpf.compat.Input.slurpBytes(raw.input(), handler) as ByteArray
+        val raw = entry.toRawEntry(dbpfHandler) as RawEntry
+        val bytes = io.github.memo33.scdbpf.compat.Input.slurpBytes(raw.input(), dbpfHandler) as ByteArray
         val utf8Preview = bytes.copyOf(minOf(bytes.size, 160))
             .toString(StandardCharsets.UTF_8)
             .takeIf { text -> text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
@@ -221,85 +234,10 @@ internal class ScdbpfEntryExplainer {
         )
     }
 
-    private fun readPackage(path: String): DbpfFile {
-        val file = requireDbpfPackageFile(path)
-        return try {
-            DbpfFile.read(file, handler) as DbpfFile
-        } catch (exception: Exception) {
-            throw PackageError("Failed to read DBPF package: ${file.absolutePath}", exception)
-        }
-    }
-
-    private fun findEntry(dbpf: DbpfFile, tgi: Tgi): StreamedEntry =
-        CollectionConverters.asJava(dbpf.entries())
-            .map { it as StreamedEntry }
-            .firstOrNull { tgiToDomain(it.tgi()) == tgi }
-            ?: throw PackageError("Entry not found for TGI $tgi")
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeExemplarEntry(entry: StreamedEntry): BufferedEntry<Exemplar> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, Exemplar.converter()) as BufferedEntry<Exemplar>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeLTextEntry(entry: StreamedEntry): BufferedEntry<LText> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, LText.contentConverter()) as BufferedEntry<LText>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeSc4PathEntry(entry: StreamedEntry): BufferedEntry<Sc4Path> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, Sc4Path.contentConverter()) as BufferedEntry<Sc4Path>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeS3dEntry(entry: StreamedEntry): BufferedEntry<S3d> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, S3d.contentConverter()) as BufferedEntry<S3d>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeFshEntry(entry: StreamedEntry): BufferedEntry<Fsh> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, Fsh.contentConverter()) as BufferedEntry<Fsh>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun scalaMapEntries(properties: Map<UInt, DbpfProperty.PropertyList<*>>): List<Pair<UInt, DbpfProperty.PropertyList<*>>> =
-        CollectionConverters.asJava(properties).entries.map { it.key to it.value }
-
     private fun decodeProperties(exemplar: Exemplar): kotlin.collections.Map<Long, List<JsonElement>> =
         scalaMapEntries(exemplar.properties()).associate { (id, propertyList) ->
             id.toLong() to propertyValues(propertyList)
         }
-
-    private fun propertyValues(propertyList: DbpfProperty.PropertyList<*>): List<JsonElement> = when (propertyList) {
-        is DbpfProperty.Single<*> -> listOf(valueToJson(propertyList.value()))
-        is DbpfProperty.Multi<*> -> CollectionConverters.asJava(propertyList.values()).map(::valueToJson)
-        else -> listOf(JsonPrimitive(propertyList.toString()))
-    }
-
-    private fun valueToJson(value: Any?): JsonElement = when (value) {
-        null -> JsonNull
-        is String -> JsonPrimitive(value)
-        is Boolean -> JsonPrimitive(value)
-        is Int -> JsonPrimitive(value.toLong())
-        is Long -> JsonPrimitive(value)
-        is Float -> JsonPrimitive(value.toDouble())
-        is Double -> JsonPrimitive(value)
-        is UInt -> JsonPrimitive(value.toLong())
-        is UShort -> JsonPrimitive(value.toInt())
-        is ScTgi -> JsonArray(
-            listOf(
-                JsonPrimitive(unsignedInt(value.tid())),
-                JsonPrimitive(unsignedInt(value.gid())),
-                JsonPrimitive(unsignedInt(value.iid())),
-            )
-        )
-        else -> JsonPrimitive(value.toString())
-    }
 
     private fun propertyText(properties: kotlin.collections.Map<Long, List<JsonElement>>, id: Long): String? =
         propertyValues(properties, id).firstOrNull()?.jsonPrimitive?.contentOrNull
@@ -308,14 +246,7 @@ internal class ScdbpfEntryExplainer {
         properties[id] ?: emptyList()
 
     private fun resourceKeys(properties: kotlin.collections.Map<Long, List<JsonElement>>): List<Tgi> =
-        listOf(0x27812820L, 0x27812821L, 0x27812822L, 0x2781282AL, 0x27812832L, 0x27812840L, 0x27812841L, 0x27812843L, 0x27812844L, 0x27812845L)
-            .flatMap { id ->
-                propertyValues(properties, id)
-                    .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toLongOrNull() }
-                    .chunked(3)
-                    .filter { it.size == 3 }
-                    .map { Tgi(it[0], it[1], it[2]) }
-            }
+        resourceKeyPropertyIds.flatMap { id -> resourceKeysFrom(propertyValues(properties, id)) }
 
     private fun transitSwitchRows(values: List<JsonElement>?): List<String> {
         val bytes = values.orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull()?.and(0xFF) }
@@ -324,22 +255,6 @@ internal class ScdbpfEntryExplainer {
             .map { (art, edges, from, to) ->
                 "${artLabel(art)} ${edgeLabel(edges)} ${travelLabel(from)} -> ${travelLabel(to)}"
             }
-    }
-
-    private fun objectClassFor(exemplarType: String?, propertyIds: Set<Long>): String {
-        if (propertyIds.any { it in 0x88EDC900L..0x88EDCDFFL }) return "Lot"
-        if (propertyIds.any { it in setOf(0xE90E25A1L, 0xE90E25A2L, 0xE90E25A3L) }) return "Transit-enabled Building"
-        return exemplarType ?: "Exemplar"
-    }
-
-    private fun exemplarTypeLabel(value: Long): String? = when (value) {
-        0x00000001L -> "Cohort"
-        0x00000002L -> "Exemplar"
-        0x0000000AL -> "Lot Configuration"
-        0x0000000BL -> "Network"
-        0x0000001EL -> "Prop"
-        0x00000021L -> "Network Lot (T21)"
-        else -> "Unknown"
     }
 
     private fun artLabel(value: Int): String = when (value) {
@@ -373,17 +288,4 @@ internal class ScdbpfEntryExplainer {
         }.joinToString("+")
     }
 
-    private fun tgiToDomain(tgi: ScTgi): Tgi = Tgi(
-        type = unsignedInt(tgi.tid()),
-        group = unsignedInt(tgi.gid()),
-        instance = unsignedInt(tgi.iid()),
-    )
-
-    private fun isBlankTgi(tgi: ScTgi): Boolean =
-        unsignedInt(tgi.tid()) == 0L && unsignedInt(tgi.gid()) == 0L && unsignedInt(tgi.iid()) == 0L
-
-    private fun unsignedInt(value: Any): Long = (value as Number).toLong() and 0xFFFF_FFFFL
-
-    private fun formatTgi(tgi: Tgi): String =
-        "${formatHex32(tgi.type)}-${formatHex32(tgi.group)}-${formatHex32(tgi.instance)}"
 }

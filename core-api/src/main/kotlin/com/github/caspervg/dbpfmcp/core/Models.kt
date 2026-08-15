@@ -56,6 +56,8 @@ data class ExemplarModel(
     val exemplarName: String? = null,
     val properties: List<ExemplarProperty>,
     val parentChain: List<ParentChainItem> = emptyList(),
+    /** Non-fatal notes, e.g. properties whose stored type disagrees with the registry. */
+    val warnings: List<String> = emptyList(),
 )
 
 @Serializable
@@ -65,6 +67,8 @@ data class CohortModel(
     val cohortName: String? = null,
     val properties: List<ExemplarProperty>,
     val parentChain: List<ParentChainItem> = emptyList(),
+    /** Non-fatal notes, e.g. properties whose stored type disagrees with the registry. */
+    val warnings: List<String> = emptyList(),
 )
 
 @Serializable
@@ -138,7 +142,14 @@ data class ListEntriesRequest(
 @Serializable
 data class ListEntriesResult(
     val packagePath: String,
+    /** Total entries in the package, before any filter. */
     val entryCount: Int,
+    /** Entries matching the request's filters, before paging. */
+    val matchCount: Int,
+    val offset: Int,
+    val limit: Int? = null,
+    /** True when more matching entries exist beyond this page. */
+    val truncated: Boolean,
     val entries: List<EntrySummary>,
 )
 
@@ -257,6 +268,9 @@ data class IndexStatusResult(
     val staleIndexedFileCount: Int,
     val missingIndexedFileCount: Int,
     val builtAtEpochMillis: Long? = null,
+    /** True when a cache file is present but unreadable (corrupt or written by another version). */
+    val unreadable: Boolean = false,
+    val warnings: List<String> = emptyList(),
 )
 
 @Serializable

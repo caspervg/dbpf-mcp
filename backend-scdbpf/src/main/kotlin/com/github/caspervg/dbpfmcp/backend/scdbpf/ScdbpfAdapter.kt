@@ -93,14 +93,19 @@ import com.github.caspervg.dbpfmcp.core.WriteIniResult
 import com.github.caspervg.dbpfmcp.core.RawWriteEntry
 import com.github.caspervg.dbpfmcp.core.WriteRawEntriesRequest
 import com.github.caspervg.dbpfmcp.core.WriteRawEntriesResult
+import com.github.caspervg.dbpfmcp.semantics.EXEMPLAR_TYPE_PROPERTY_ID
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
 import com.github.caspervg.dbpfmcp.semantics.canonicalPropertyType
 import com.github.caspervg.dbpfmcp.semantics.decodePropertyValue
 import com.github.caspervg.dbpfmcp.semantics.describeProperty
+import com.github.caspervg.dbpfmcp.semantics.isTransitEnabled
 import com.github.caspervg.dbpfmcp.semantics.kindForType
 import com.github.caspervg.dbpfmcp.semantics.maybeExemplarName
+import com.github.caspervg.dbpfmcp.semantics.objectClassFor
 import com.github.caspervg.dbpfmcp.semantics.propertyName
+import com.github.caspervg.dbpfmcp.semantics.resourceKeyPropertyIds
+import com.github.caspervg.dbpfmcp.semantics.resourceKeysFrom
 import com.github.caspervg.dbpfmcp.semantics.typesAreCompatible
 import io.github.memo33.passera.unsigned.UByte
 import io.github.memo33.passera.unsigned.UInt
@@ -157,35 +162,11 @@ import javax.imageio.ImageIO
 import java.awt.image.BufferedImage
 
 class ScdbpfAdapter : DbpfService {
-    private fun decodeTextEntryPayload(storedBytes: ByteArray, tgi: Tgi): ByteArray {
-        val qfsOffset = when {
-            QfsDecoder.isQfsCompressed(storedBytes, 0) -> 0
-            storedBytes.size >= 6 && QfsDecoder.isQfsCompressed(storedBytes, 4) -> 4
-            else -> return storedBytes
-        }
-        return QfsDecoder.decode(storedBytes, qfsOffset)?.bytes
-            ?: throw DecodeError("Network INI resource ${formatTgi(tgi)} contains an invalid QFS stream")
-    }
-
     override val backendName: String = "scdbpf"
 
-    private val handler: ExceptionHandler = io.github.memo33.scdbpf.`package`.strategy().throwExceptions()
     private val pluginIndexer = ScdbpfPluginIndexer()
     private val entryExplainer = ScdbpfEntryExplainer()
     private val json = Json { prettyPrint = true }
-
-    private val resourceKeyPropertyIds = setOf(
-        0x27812820L,
-        0x27812821L,
-        0x27812822L,
-        0x2781282AL,
-        0x27812832L,
-        0x27812840L,
-        0x27812841L,
-        0x27812843L,
-        0x27812844L,
-        0x27812845L,
-    )
 
     override fun listEntries(request: ListEntriesRequest): ListEntriesResult {
         validatePaging(request)
@@ -197,30 +178,41 @@ class ScdbpfAdapter : DbpfService {
         val offset = request.offset ?: 0
         val labelContains = request.labelContains
 
-        val filtered = entries.asSequence()
-            .map { entry ->
-                val tgi = tgiToDomain(entry.tgi())
-                val rawEntry = entry.toRawEntry(handler) as RawEntry
+        // Filter on the cheap TGI/label data first. Decoding each entry to read its compression
+        // flag is the expensive part, so it now happens only for the page actually returned.
+        val matching = entries.asSequence()
+            .map { entry -> entry to tgiToDomain(entry.tgi()) }
+            .filter { (_, tgi) -> request.typeFilter == null || tgi.type == request.typeFilter }
+            .filter { (_, tgi) -> request.groupFilter == null || tgi.group == request.groupFilter }
+            .filter { (_, tgi) -> request.kindFilter == null || kindForType(tgi.type) == request.kindFilter }
+            .filter { (entry, _) ->
+                labelContains == null ||
+                    entry.tgi().label().contains(labelContains, ignoreCase = true)
+            }
+            .toList()
+
+        val page = matching.asSequence()
+            .drop(offset)
+            .let { sequence -> if (limit != null) sequence.take(limit) else sequence }
+            .map { (entry, tgi) ->
                 EntrySummary(
                     tgi = tgi,
                     kind = kindForType(tgi.type),
                     size = entry.size().toLong(),
-                    compressed = rawEntry.compressed(),
+                    compressed = (entry.toRawEntry(dbpfHandler) as RawEntry).compressed(),
                     label = entry.tgi().label().takeIf(String::isNotBlank),
                 )
             }
-            .filter { request.typeFilter == null || it.tgi.type == request.typeFilter }
-            .filter { request.groupFilter == null || it.tgi.group == request.groupFilter }
-            .filter { request.kindFilter == null || it.kind == request.kindFilter }
-            .filter { labelContains == null || (it.label?.contains(labelContains, ignoreCase = true) == true) }
-            .drop(offset)
-            .let { sequence -> if (limit != null) sequence.take(limit) else sequence }
             .toList()
 
         return ListEntriesResult(
             packagePath = File(request.path).absolutePath,
             entryCount = entries.size,
-            entries = filtered,
+            matchCount = matching.size,
+            offset = offset,
+            limit = limit,
+            truncated = offset + page.size < matching.size,
+            entries = page,
         )
     }
 
@@ -347,7 +339,8 @@ class ScdbpfAdapter : DbpfService {
         }
 
         val exemplar = exemplarEntry.content()
-        val properties = decodeProperties(exemplar)
+        val warnings = mutableListOf<String>()
+        val properties = decodeProperties(exemplar, warnings)
         val exemplarName = properties.firstOrNull { maybeExemplarName(it.id) }
             ?.values
             ?.firstOrNull()
@@ -360,6 +353,7 @@ class ScdbpfAdapter : DbpfService {
             parentCohort = if (isBlankTgi(parent)) null else tgiToDomain(parent),
             exemplarName = exemplarName,
             properties = properties,
+            warnings = warnings,
             parentChain = if (request.resolveParent) {
                 resolveParentChain(dbpf, parent, request.path, request.rootPath)
             } else {
@@ -386,7 +380,8 @@ class ScdbpfAdapter : DbpfService {
         if (!cohort.isCohort()) {
             throw DecodeError("Requested entry was decoded but not marked as a cohort")
         }
-        val properties = decodeProperties(cohort)
+        val warnings = mutableListOf<String>()
+        val properties = decodeProperties(cohort, warnings)
         val cohortName = properties.firstOrNull { maybeExemplarName(it.id) }
             ?.values
             ?.firstOrNull()
@@ -398,6 +393,7 @@ class ScdbpfAdapter : DbpfService {
             parentCohort = if (isBlankTgi(parent)) null else tgiToDomain(parent),
             cohortName = cohortName,
             properties = properties,
+            warnings = warnings,
             parentChain = if (request.resolveParent) {
                 resolveParentChain(dbpf, parent, request.path, request.rootPath)
             } else {
@@ -803,16 +799,13 @@ class ScdbpfAdapter : DbpfService {
         }
         val dbpf = readPackage(request.path)
         val entry = findEntry(dbpf, request.tgi)
-        val rawEntry = try {
-            entry.toRawEntry(handler) as RawEntry
-        } catch (exception: Exception) {
-            throw DecodeError("Failed to read KEY resource ${request.tgi}", exception)
-        }
-        val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        // Decode before truncating: slicing a QFS stream would make it undecodable.
+        val decoded = decodeEntry(entry, request.tgi)
+        val bytes = decoded.bytes
         val slice = if (maxBytes != null && bytes.size > maxBytes) bytes.copyOf(maxBytes) else bytes
         return decodeKeyCfgPayload(
             bytes = slice,
-            compressed = rawEntry.compressed(),
+            compressed = decoded.compressed,
             tgi = request.tgi,
         )
     }
@@ -828,16 +821,13 @@ class ScdbpfAdapter : DbpfService {
         }
         val dbpf = readPackage(request.path)
         val entry = findEntry(dbpf, request.tgi)
-        val rawEntry = try {
-            entry.toRawEntry(handler) as RawEntry
-        } catch (exception: Exception) {
-            throw DecodeError("Failed to read TAB resource ${request.tgi}", exception)
-        }
-        val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        // Decode before truncating: slicing a QFS stream would make it undecodable.
+        val decoded = decodeEntry(entry, request.tgi)
+        val bytes = decoded.bytes
         val slice = if (maxBytes != null && bytes.size > maxBytes) bytes.copyOf(maxBytes) else bytes
         return decodeTabBinaryPayload(
             bytes = slice,
-            compressed = rawEntry.compressed(),
+            compressed = decoded.compressed,
             tgi = request.tgi,
             maxWords = maxWords,
         )
@@ -851,11 +841,11 @@ class ScdbpfAdapter : DbpfService {
         val dbpf = readPackage(request.path)
         val entry = findEntry(dbpf, request.tgi)
         val rawEntry = try {
-            entry.toRawEntry(handler) as RawEntry
+            entry.toRawEntry(dbpfHandler) as RawEntry
         } catch (exception: Exception) {
             throw DecodeError("Failed to read raw entry ${request.tgi}", exception)
         }
-        val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        val bytes = Input.slurpBytes(rawEntry.input(), dbpfHandler) as ByteArray
         val slice = if (maxBytes != null && bytes.size > maxBytes) bytes.copyOf(maxBytes) else bytes
         return RawEntryModel(
             tgi = request.tgi,
@@ -980,7 +970,7 @@ class ScdbpfAdapter : DbpfService {
                 outputFile,
                 ScalaOption.empty<UInt>(),
                 ScalaOption.empty<UInt>(),
-                handler,
+                dbpfHandler,
             )
         } catch (exception: Exception) {
             throw PackageError(
@@ -1110,19 +1100,13 @@ class ScdbpfAdapter : DbpfService {
     override fun readIni(request: ReadIniRequest): ReadIniResult {
         val dbpf = readPackage(request.path)
         val entry = findEntry(dbpf, request.tgi)
-        val rawEntry = try {
-            entry.toRawEntry(handler) as RawEntry
-        } catch (exception: Exception) {
-            throw DecodeError("Failed to read Network INI resource ${formatTgi(request.tgi)}", exception)
-        }
-        val storedBytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
-        val textBytes = decodeTextEntryPayload(storedBytes, request.tgi)
+        val decoded = decodeEntry(entry, request.tgi)
         return ReadIniResult(
             path = File(request.path).absolutePath,
             tgi = request.tgi,
-            compressed = rawEntry.compressed(),
-            size = textBytes.size,
-            text = String(textBytes, StandardCharsets.UTF_8),
+            compressed = decoded.compressed,
+            size = decoded.bytes.size,
+            text = String(decoded.bytes, StandardCharsets.UTF_8),
         )
     }
 
@@ -1381,7 +1365,7 @@ class ScdbpfAdapter : DbpfService {
         CollectionConverters.asJava(dbpf.entries()).map { entry ->
             entry as StreamedEntry
             val tgi = tgiToDomain(entry.tgi())
-            val rawEntry = entry.toRawEntry(handler) as RawEntry
+            val rawEntry = entry.toRawEntry(dbpfHandler) as RawEntry
             EntrySummary(
                 tgi = tgi,
                 kind = kindForType(tgi.type),
@@ -1421,49 +1405,36 @@ class ScdbpfAdapter : DbpfService {
         warnings: MutableList<String>,
     ): Sc4ObjectHint? {
         val tgi = tgiToDomain(entry.tgi())
-        val exemplar = try {
-            decodeExemplarEntry(entry).content()
+        // decodeProperties has to be inside the guard too: it decodes every property value, and
+        // used to throw straight out of inspect_package on the first registry type mismatch.
+        val exemplar: Exemplar
+        val properties: List<ExemplarProperty>
+        try {
+            exemplar = decodeExemplarEntry(entry).content()
+            properties = decodeProperties(exemplar, warnings)
         } catch (exception: Exception) {
             warnings += "Could not decode ${formatTgi(tgi)} for SC4 object hints: ${exception.message}"
             return null
         }
-        val properties = decodeProperties(exemplar)
-        val exemplarType = properties.firstOrNull { it.id == 0x00000010L }
+        val exemplarType = properties.firstOrNull { it.id == EXEMPLAR_TYPE_PROPERTY_ID }
             ?.decodedValues
             ?.firstOrNull()
             ?.label
         val parent = exemplar.parent()
+        val propertyIds = properties.map { it.id }
         val resourceKeys = properties
             .filter { it.id in resourceKeyPropertyIds }
-            .flatMap(::resourceKeysFromProperty)
+            .flatMap { resourceKeysFrom(it.values) }
         return Sc4ObjectHint(
             tgi = tgi,
-            objectClass = objectClassFor(exemplarType, properties),
+            objectClass = objectClassFor(exemplarType, propertyIds),
             name = exemplarName(properties),
             exemplarType = exemplarType,
             propertyCount = properties.size,
             parentCohort = if (isBlankTgi(parent)) null else tgiToDomain(parent),
-            transitEnabled = properties.any { it.id in setOf(0xE90E25A1L, 0xE90E25A2L, 0xE90E25A3L) },
+            transitEnabled = isTransitEnabled(propertyIds),
             resourceKeys = resourceKeys.distinct(),
         )
-    }
-
-    private fun objectClassFor(exemplarType: String?, properties: List<ExemplarProperty>): String {
-        if (properties.any { it.id in 0x88EDC900L..0x88EDCDFFL }) {
-            return "Lot"
-        }
-        if (properties.any { it.id in setOf(0xE90E25A1L, 0xE90E25A2L, 0xE90E25A3L) }) {
-            return "Transit-enabled Building"
-        }
-        return when (exemplarType) {
-            "Lot Configuration" -> "Lot"
-            "Prop" -> "Prop"
-            "Flora" -> "Flora"
-            "Building", "Exemplar" -> "Building or exemplar"
-            "Network" -> "Network"
-            null -> "Exemplar"
-            else -> exemplarType
-        }
     }
 
     private fun exemplarName(properties: List<ExemplarProperty>): String? =
@@ -1472,15 +1443,6 @@ class ScdbpfAdapter : DbpfService {
             ?.firstOrNull()
             ?.jsonPrimitive
             ?.contentOrNull
-
-    private fun resourceKeysFromProperty(property: ExemplarProperty): List<Tgi> {
-        val values = property.values.mapNotNull { value ->
-            (value as? JsonPrimitive)?.contentOrNull?.trim()?.toLongOrNull()
-        }
-        return values.chunked(3)
-            .filter { it.size == 3 }
-            .map { Tgi(type = it[0], group = it[1], instance = it[2]) }
-    }
 
     private fun resolveParentChain(
         dbpf: io.github.memo33.scdbpf.DbpfFile,
@@ -1559,15 +1521,6 @@ class ScdbpfAdapter : DbpfService {
         }
     }
 
-    private fun readPackage(path: String): io.github.memo33.scdbpf.DbpfFile {
-        val file = requireDbpfPackageFile(path)
-        return try {
-            DbpfFile.read(file, handler) as io.github.memo33.scdbpf.DbpfFile
-        } catch (exception: Exception) {
-            throw PackageError("Failed to read DBPF package: ${file.absolutePath}", exception)
-        }
-    }
-
     private fun decodeExemplarForText(path: String, tgi: Tgi, expectedType: Long): Exemplar {
         val dbpf = readPackage(path)
         val entry = findEntry(dbpf, tgi)
@@ -1613,78 +1566,12 @@ class ScdbpfAdapter : DbpfService {
         return path
     }
 
-    private fun findEntry(dbpf: io.github.memo33.scdbpf.DbpfFile, tgi: Tgi): StreamedEntry =
-        findEntryOrNull(dbpf, tgi)
-            ?: throw PackageError("Entry not found for TGI $tgi")
-
-    private fun findEntryOrNull(dbpf: io.github.memo33.scdbpf.DbpfFile, tgi: Tgi): StreamedEntry? =
-        CollectionConverters.asJava(dbpf.entries())
-            .map { it as StreamedEntry }
-            .firstOrNull { tgiToDomain(it.tgi()) == tgi }
-
-    private fun tgiToDomain(tgi: ScTgi): Tgi = Tgi(
-        type = unsignedInt(tgi.tid()),
-        group = unsignedInt(tgi.gid()),
-        instance = unsignedInt(tgi.iid()),
-    )
-
-    private fun formatTgi(tgi: Tgi): String =
-        "${formatHex32(tgi.type)}-${formatHex32(tgi.group)}-${formatHex32(tgi.instance)}"
-
-    private fun unsignedInt(value: Any): Long = (value as Number).toLong() and 0xFFFF_FFFFL
-
     private fun utf8Preview(bytes: ByteArray): String? =
         bytes.toString(StandardCharsets.UTF_8)
             .takeIf { text -> text.isNotEmpty() && text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
 
-    private fun isBlankTgi(tgi: ScTgi): Boolean =
-        unsignedInt(tgi.tid()) == 0L && unsignedInt(tgi.gid()) == 0L && unsignedInt(tgi.iid()) == 0L
-
-    @Suppress("UNCHECKED_CAST")
-    private fun scalaMapEntries(
-        properties: Map<UInt, DbpfProperty.PropertyList<*>>
-    ): List<Pair<UInt, DbpfProperty.PropertyList<*>>> =
-        CollectionConverters.asJava(properties).entries.map { entry ->
-            entry.key to entry.value
-        }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeExemplarEntry(entry: StreamedEntry): BufferedEntry<Exemplar> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, Exemplar.converter()) as BufferedEntry<Exemplar>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeLTextEntry(entry: StreamedEntry): BufferedEntry<LText> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, LText.contentConverter()) as BufferedEntry<LText>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeSc4PathEntry(entry: StreamedEntry): BufferedEntry<Sc4Path> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, Sc4Path.contentConverter()) as BufferedEntry<Sc4Path>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeS3dEntry(entry: StreamedEntry): BufferedEntry<S3d> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, S3d.contentConverter()) as BufferedEntry<S3d>
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeFshEntry(entry: StreamedEntry): BufferedEntry<Fsh> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, Fsh.contentConverter()) as BufferedEntry<Fsh>
-    }
-
     private fun readNativePngEntry(entry: StreamedEntry, tgi: Tgi): ImageEntryModel {
-        val rawEntry = try {
-            entry.toRawEntry(handler) as RawEntry
-        } catch (exception: Exception) {
-            throw DecodeError("Failed to read PNG ${tgi}", exception)
-        }
-        val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        val bytes = entryBytes(entry, tgi)
         val image: BufferedImage = ImageIO.read(ByteArrayInputStream(bytes))
             ?: throw DecodeError("Failed to decode PNG ${tgi}: unsupported image data")
         return ImageEntryModel(
@@ -1731,50 +1618,48 @@ class ScdbpfAdapter : DbpfService {
         )
     }
 
-    private fun decodeProperties(exemplar: Exemplar): List<ExemplarProperty> =
+    /**
+     * Decodes every property of an exemplar.
+     *
+     * A property whose stored value disagrees with the bundled registry's declared type is
+     * reported, not fatal: it comes back with its raw values, `typeMatchesExpected = false`, and a
+     * warning. Modded exemplars routinely diverge from the registry, and a single such property
+     * used to abort the entire tool call.
+     */
+    private fun decodeProperties(
+        exemplar: Exemplar,
+        warnings: MutableList<String>? = null,
+    ): List<ExemplarProperty> =
         scalaMapEntries(exemplar.properties()).map { (id, propertyList) ->
             val propertyId = id.toLong()
+            val actualType = propertyList.valueType().toString()
             val expectedType = canonicalPropertyType(describeProperty(propertyId)?.type)
             val values = propertyValues(propertyList)
-            val decoded = decodePropertyValue(propertyId, values)
+            val decoded = try {
+                decodePropertyValue(propertyId, values)
+            } catch (exception: Exception) {
+                warnings?.add(
+                    "Property ${formatHex32(propertyId)} does not match its registered type " +
+                        "($actualType stored, $expectedType expected); returning raw values.",
+                )
+                null
+            }
             ExemplarProperty(
                 id = propertyId,
                 name = propertyName(propertyId),
-                valueType = propertyList.valueType().toString(),
+                valueType = actualType,
                 expectedType = expectedType,
-                typeMatchesExpected = typesAreCompatible(propertyList.valueType().toString(), expectedType),
+                typeMatchesExpected = if (decoded == null && expectedType != null) {
+                    false
+                } else {
+                    typesAreCompatible(actualType, expectedType)
+                },
                 values = values,
                 decodedValues = decoded?.values,
                 semanticType = decoded?.semanticType,
                 interpretation = decoded?.interpretation,
             )
         }
-
-    private fun propertyValues(propertyList: DbpfProperty.PropertyList<*>): List<JsonElement> = when (propertyList) {
-        is DbpfProperty.Single<*> -> listOf(valueToJson(propertyList.value()))
-        is DbpfProperty.Multi<*> -> CollectionConverters.asJava(propertyList.values()).map(::valueToJson)
-        else -> listOf(JsonPrimitive(propertyList.toString()))
-    }
-
-    private fun valueToJson(value: Any?): JsonElement = when (value) {
-        null -> JsonNull
-        is String -> JsonPrimitive(value)
-        is Boolean -> JsonPrimitive(value)
-        is Int -> JsonPrimitive(value.toLong())
-        is Long -> JsonPrimitive(value)
-        is Float -> JsonPrimitive(value.toDouble())
-        is Double -> JsonPrimitive(value)
-        is UInt -> JsonPrimitive(value.toLong())
-        is UShort -> JsonPrimitive(value.toInt())
-        is ScTgi -> JsonArray(
-            listOf(
-                JsonPrimitive(unsignedInt(value.tid())),
-                JsonPrimitive(unsignedInt(value.gid())),
-                JsonPrimitive(unsignedInt(value.iid())),
-            )
-        )
-        else -> JsonPrimitive(value.toString())
-    }
 
     private fun scalaOptionToNullable(value: scala.Option<String>): String? =
         if (value.isDefined) value.get() else null

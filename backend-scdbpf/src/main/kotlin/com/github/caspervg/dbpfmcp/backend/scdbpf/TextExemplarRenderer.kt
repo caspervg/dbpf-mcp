@@ -1,5 +1,6 @@
 package com.github.caspervg.dbpfmcp.backend.scdbpf
 
+import com.github.caspervg.dbpfmcp.core.InputError
 import com.github.caspervg.dbpfmcp.semantics.propertyName
 import io.github.memo33.passera.unsigned.UByte
 import io.github.memo33.passera.unsigned.UInt
@@ -48,7 +49,9 @@ internal object TextExemplarRenderer {
 
         return if (type == "String") {
             val value = values.firstOrNull() as? String ?: ""
-            val byteLength = value.toByteArray(StandardCharsets.US_ASCII).size
+            // UTF-8, not US-ASCII: encoding as ASCII collapses every non-ASCII character to '?',
+            // which silently produced the wrong declared byte length for non-ASCII names.
+            val byteLength = value.toByteArray(StandardCharsets.UTF_8).size
             "${formatSigned32(id)}:$description=String:$byteLength:${textLiteral(value)}"
         } else {
             "${formatSigned32(id)}:$description=$type:$repetitions:{${values.joinToString(",") { formatValue(it) }}}"
@@ -63,7 +66,9 @@ internal object TextExemplarRenderer {
 
     private fun textLiteral(value: String): String {
         if (value.contains("\"}")) {
-            throw IllegalArgumentException("Text exemplar syntax cannot represent strings containing the sequence \"}")
+            // InputError, not IllegalArgumentException: this is a caller-visible limitation and
+            // has to stay inside the typed error hierarchy to be reported as such.
+            throw InputError("Text exemplar syntax cannot represent strings containing the sequence \"}")
         }
         return "{\"$value\"}"
     }

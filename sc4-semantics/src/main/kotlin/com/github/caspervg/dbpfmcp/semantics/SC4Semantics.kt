@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -68,15 +69,75 @@ private val exemplarTypeLabels = mapOf(
     0x0000002BL to "Graph Control",
 )
 
-private val resourceKeyPropertyIds = setOf(
+/**
+ * Property IDs whose values are flat runs of (type, group, instance) triplets.
+ *
+ * This is the single definition; the backend classes previously kept their own copies, and the
+ * copy here was missing the last five IDs, so `decode_property_value` silently declined to
+ * interpret them.
+ */
+val resourceKeyPropertyIds = setOf(
     0x27812820L,
     0x27812821L,
     0x27812822L,
     0x2781282AL,
     0x27812832L,
+    0x27812840L,
+    0x27812841L,
+    0x27812843L,
+    0x27812844L,
+    0x27812845L,
 )
 
 fun kindForType(type: Long): KnownEntryKind = knownTypeKinds[type] ?: KnownEntryKind.UNKNOWN
+
+/** Property ID 0x00000010, "Exemplar Type". */
+const val EXEMPLAR_TYPE_PROPERTY_ID: Long = 0x00000010L
+
+/** Property IDs that mark a transit-enabled building. */
+private val transitEnabledPropertyIds = setOf(0xE90E25A1L, 0xE90E25A2L, 0xE90E25A3L)
+
+/** Property ID range occupied by lot configuration data. */
+private val lotConfigPropertyIds = 0x88EDC900L..0x88EDCDFFL
+
+/**
+ * Human-readable label for an "Exemplar Type" value, or null when the value is not one this
+ * registry knows.
+ *
+ * The backend classes each used to carry a shorter, divergent copy of this table (six entries in
+ * the explainer, four in the plugin indexer), which is why `search_index` and `inspect_package`
+ * could disagree about the same entry.
+ */
+fun exemplarTypeLabel(value: Long): String? = exemplarTypeLabels[value]
+
+fun isTransitEnabled(propertyIds: Collection<Long>): Boolean =
+    propertyIds.any { it in transitEnabledPropertyIds }
+
+/**
+ * Classifies an exemplar for search and summary purposes. Single definition shared by
+ * `inspect_package`, `search_index`, and `explain_entry`, which previously disagreed.
+ */
+fun objectClassFor(exemplarType: String?, propertyIds: Collection<Long>): String {
+    if (propertyIds.any { it in lotConfigPropertyIds }) return "Lot"
+    if (isTransitEnabled(propertyIds)) return "Transit-enabled Building"
+    return exemplarType ?: "Exemplar"
+}
+
+/**
+ * Reads a resource-key property's values as (type, group, instance) triplets.
+ *
+ * Fails closed: if any value is not an integer, or the count is not a positive multiple of three,
+ * no keys are returned. The previous implementations dropped unparseable values and re-chunked
+ * whatever was left, which silently fabricated TGIs that were never in the file.
+ */
+fun resourceKeysFrom(values: List<JsonElement>): List<Tgi> {
+    if (values.isEmpty() || values.size % 3 != 0) return emptyList()
+    val numbers = values.map { value ->
+        val primitive = value as? JsonPrimitive ?: return emptyList()
+        primitive.contentOrNull?.trim()?.toLongOrNull() ?: return emptyList()
+    }
+    return numbers.chunked(3).map { Tgi(type = it[0], group = it[1], instance = it[2]) }
+}
 
 fun propertyDefinition(propertyId: Long): PropertyDefinition? = PropertyRegistry.instance.propertyById(propertyId)
 
@@ -95,6 +156,7 @@ fun describeProperty(propertyId: Long): PropertyDescription? = propertyDefinitio
 fun canonicalPropertyType(type: String?): String? = when (type?.trim()) {
     null, "" -> null
     "UInt32", "Uint32", "Unit 32", "Unit32" -> "Uint32"
+    "UInt16", "Uint16", "Unit16" -> "Uint16"
     "UInt8", "Uint8", "Unit8" -> "Uint8"
     "Bool" -> "Bool"
     "Float32" -> "Float32"
@@ -145,7 +207,14 @@ fun parseTgi(text: String): Tgi {
     )
 }
 
-fun formatHex32(value: Long): String = value.toULong().toString(16).uppercase().padStart(8, '0')
+/**
+ * Formats the low 32 bits of [value] as 8 uppercase hex digits.
+ *
+ * The mask matters for negative values: `padStart` cannot truncate, so without it a `Sint32`
+ * property holding -1 rendered as the 16-digit "FFFFFFFFFFFFFFFF" in a field named for 32 bits.
+ */
+fun formatHex32(value: Long): String =
+    (value and 0xFFFF_FFFFL).toString(16).uppercase().padStart(8, '0')
 
 fun formatHex64(value: Long): String = value.toULong().toString(16).uppercase().padStart(16, '0')
 
@@ -178,14 +247,14 @@ private fun decodeValue(index: Int, raw: JsonElement, expectedType: String?, pro
             normalized = JsonPrimitive(doubleValue),
         )
     }
-    "Uint8", "Uint32", "Sint32", "Sint64" -> {
+    "Uint8", "Uint16", "Uint32", "Sint32", "Sint64" -> {
         val numericValue = parseIntegralValue(raw.jsonPrimitive.content, index)
         DecodedPropertyValue(
             index = index,
             raw = raw,
             normalized = JsonPrimitive(numericValue),
             decimal = numericValue,
-            hex = formatHex32(numericValue),
+            hex = if (expectedType == "Sint64") formatHex64(numericValue) else formatHex32(numericValue),
             label = numericLabel(propertyId, numericValue),
         )
     }

@@ -11,33 +11,26 @@ import com.github.caspervg.dbpfmcp.core.SearchIndexMatch
 import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
 import com.github.caspervg.dbpfmcp.core.SearchIndexResult
 import com.github.caspervg.dbpfmcp.core.Tgi
+import com.github.caspervg.dbpfmcp.semantics.EXEMPLAR_TYPE_PROPERTY_ID
 import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
+import com.github.caspervg.dbpfmcp.semantics.exemplarTypeLabel
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.kindForType
-import io.github.memo33.scdbpf.BufferedEntry
+import com.github.caspervg.dbpfmcp.semantics.objectClassFor
 import io.github.memo33.scdbpf.DbpfFile
-import io.github.memo33.scdbpf.DbpfType
-import io.github.memo33.scdbpf.DbpfProperty
-import io.github.memo33.scdbpf.Exemplar
-import io.github.memo33.scdbpf.RawEntry
 import io.github.memo33.scdbpf.StreamedEntry
-import io.github.memo33.scdbpf.Tgi as ScTgi
-import io.github.memo33.scdbpf.compat.ExceptionHandler
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonClassDiscriminator
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
 import scala.jdk.javaapi.CollectionConverters
-import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.createDirectories
@@ -48,7 +41,6 @@ import kotlin.io.path.readLines
 import kotlin.io.path.writeLines
 
 internal class ScdbpfPluginIndexer {
-    private val handler: ExceptionHandler = io.github.memo33.scdbpf.`package`.strategy().throwExceptions()
     private val json = Json { ignoreUnknownKeys = true }
 
     fun indexPlugins(request: IndexPluginsRequest): IndexPluginsResult {
@@ -58,48 +50,69 @@ internal class ScdbpfPluginIndexer {
             throw InputError("maxFiles must be > 0")
         }
 
+        val cachePath = indexPath(root)
         val files = containerFiles(root).let { found ->
             if (maxFiles == null) found else found.take(maxFiles)
         }
-        val cachePath = indexPath(root)
+
+        // forceRefresh was previously accepted and ignored, so every call rebuilt from scratch.
+        if (!request.forceRefresh) {
+            val current = currentIndexOrNull(cachePath, files)
+            if (current != null) {
+                return IndexPluginsResult(
+                    rootPath = root.absolutePathString(),
+                    cachePath = cachePath.absolutePathString(),
+                    fileCount = current.fileCount,
+                    indexedFileCount = current.fileCount,
+                    entryCount = current.entryCount,
+                    skippedFileCount = 0,
+                    warningCount = 0,
+                    warnings = listOf("Index is already current; pass forceRefresh=true to rebuild it."),
+                    builtAtEpochMillis = current.builtAtEpochMillis,
+                )
+            }
+        }
+
         val warnings = mutableListOf<String>()
-        val records = mutableListOf<JsonObject>()
+        val records = mutableListOf<IndexedEntry>()
+        val indexedFiles = mutableListOf<IndexedFile>()
         val builtAt = System.currentTimeMillis()
         var skippedFiles = 0
         var entryCount = 0
 
         files.forEach { file ->
+            var mtime = 0L
+            var size = 0L
             try {
                 val stat = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes::class.java)
-                val dbpf = DbpfFile.read(file.toFile(), handler) as DbpfFile
+                mtime = stat.lastModifiedTime().toMillis()
+                size = stat.size()
+                val dbpf = DbpfFile.read(file.toFile(), dbpfHandler) as DbpfFile
                 val entries = CollectionConverters.asJava(dbpf.entries()).map { it as StreamedEntry }
                 entryCount += entries.size
                 entries.forEach { entry ->
-                    records += indexRecord(root, file, stat.lastModifiedTime().toMillis(), stat.size(), entry)
+                    records += indexRecord(root, file, entry, warnings)
                 }
+                indexedFiles += IndexedFile(file.absolutePathString(), mtime, size)
             } catch (exception: Exception) {
                 skippedFiles += 1
+                indexedFiles += IndexedFile(file.absolutePathString(), mtime, size, skipped = true)
                 warnings += "Skipped ${file.absolutePathString()}: ${exception.message ?: exception::class.simpleName}"
             }
         }
 
-        cachePath.parent.createDirectories()
-        cachePath.writeLines(
+        val metadata = IndexMetadata(
+            rootPath = root.absolutePathString(),
+            builtAtEpochMillis = builtAt,
+            files = indexedFiles,
+            entryCount = entryCount,
+        )
+        writeIndexAtomically(
+            cachePath,
             buildList {
-                add(
-                    json.encodeToString(
-                        JsonObject.serializer(),
-                        buildJsonObject {
-                            put("recordType", "metadata")
-                            put("rootPath", root.absolutePathString())
-                            put("builtAtEpochMillis", builtAt)
-                            put("fileCount", files.size)
-                            put("entryCount", entryCount)
-                        },
-                    )
-                )
-                records.forEach { add(json.encodeToString(JsonObject.serializer(), it)) }
-            }
+                add(json.encodeToString<IndexRecord>(metadata))
+                records.forEach { add(json.encodeToString<IndexRecord>(it)) }
+            },
         )
 
         return IndexPluginsResult(
@@ -130,21 +143,27 @@ internal class ScdbpfPluginIndexer {
             )
         }
 
-        val parsed = readIndex(cachePath)
-        val fileStats = parsed.entries
-            .groupBy { it.packagePath }
-            .mapValues { (_, entries) -> entries.first() }
+        val parsed = readIndexOrNull(cachePath)
+            ?: return IndexStatusResult(
+                rootPath = root.absolutePathString(),
+                cachePath = cachePath.absolutePathString(),
+                exists = true,
+                fileCount = 0,
+                entryCount = 0,
+                staleIndexedFileCount = 0,
+                missingIndexedFileCount = 0,
+                unreadable = true,
+                warnings = listOf(staleIndexMessage(root)),
+            )
+
         var stale = 0
         var missing = 0
-        fileStats.values.forEach { entry ->
-            val file = Path.of(entry.packagePath)
+        parsed.metadata.files.forEach { indexed ->
+            val file = Path.of(indexed.path)
             if (!Files.exists(file)) {
                 missing += 1
-            } else {
-                val stat = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes::class.java)
-                if (stat.lastModifiedTime().toMillis() != entry.packageMtimeMillis || stat.size() != entry.packageSize) {
-                    stale += 1
-                }
+            } else if (fileChanged(indexed)) {
+                stale += 1
             }
         }
 
@@ -152,11 +171,11 @@ internal class ScdbpfPluginIndexer {
             rootPath = root.absolutePathString(),
             cachePath = cachePath.absolutePathString(),
             exists = true,
-            fileCount = fileStats.size,
+            fileCount = parsed.metadata.files.size,
             entryCount = parsed.entries.size,
             staleIndexedFileCount = stale,
             missingIndexedFileCount = missing,
-            builtAtEpochMillis = parsed.builtAtEpochMillis,
+            builtAtEpochMillis = parsed.metadata.builtAtEpochMillis,
         )
     }
 
@@ -175,9 +194,10 @@ internal class ScdbpfPluginIndexer {
             throw InputError("offset must be >= 0")
         }
 
+        val parsed = readIndexOrNull(cachePath) ?: throw InputError(staleIndexMessage(root))
         val query = request.query?.trim()?.takeIf(String::isNotEmpty)?.lowercase()
         val objectClass = request.objectClass?.trim()?.takeIf(String::isNotEmpty)?.lowercase()
-        val matches = readIndex(cachePath).entries.mapNotNull { entry ->
+        val matches = parsed.entries.mapNotNull { entry ->
             matchEntry(entry, query, request.kindFilter, objectClass, request.propertyId)
         }
 
@@ -201,13 +221,15 @@ internal class ScdbpfPluginIndexer {
         if (!cachePath.exists()) {
             return IndexedEntryLookup.Unavailable("Index not found for ${root.absolutePathString()}; call index_plugins first.")
         }
-        val status = indexStatus(IndexStatusRequest(root.absolutePathString()))
-        if (status.staleIndexedFileCount > 0 || status.missingIndexedFileCount > 0) {
+        // One read, not three: this used to call indexStatus (a full parse) and then parse the
+        // whole file again, once per link of a parent-cohort chain.
+        val parsed = readIndexOrNull(cachePath) ?: return IndexedEntryLookup.Unavailable(staleIndexMessage(root))
+        if (parsed.metadata.files.any(::fileChanged)) {
             return IndexedEntryLookup.Unavailable(
                 "Index is stale for ${root.absolutePathString()}; call index_plugins before resolving cross-package parents.",
             )
         }
-        val entry = readIndex(cachePath).entries.firstOrNull { indexed ->
+        val entry = parsed.entries.firstOrNull { indexed ->
             indexed.tgi == tgi && (allowedKinds.isEmpty() || indexed.kind in allowedKinds)
         } ?: return IndexedEntryLookup.NotFound
         return IndexedEntryLookup.Found(packagePath = entry.packagePath)
@@ -216,50 +238,38 @@ internal class ScdbpfPluginIndexer {
     private fun indexRecord(
         root: Path,
         file: Path,
-        mtimeMillis: Long,
-        size: Long,
         entry: StreamedEntry,
-    ): JsonObject {
+        warnings: MutableList<String>,
+    ): IndexedEntry {
         val tgi = tgiToDomain(entry.tgi())
         val kind = kindForType(tgi.type)
         val hint = if (kind == KnownEntryKind.EXEMPLAR || kind == KnownEntryKind.COHORT) {
-            exemplarHint(entry)
+            exemplarHint(entry, tgi, warnings)
         } else {
             null
         }
-        val rawEntry = runCatching { entry.toRawEntry(handler) as RawEntry }.getOrNull()
-        return buildJsonObject {
-            put("recordType", "entry")
-            put("rootPath", root.absolutePathString())
-            put("packagePath", file.absolutePathString())
-            put("relativePath", root.relativize(file).toString())
-            put("packageMtimeMillis", mtimeMillis)
-            put("packageSize", size)
-            put("type", formatHex32(tgi.type))
-            put("group", formatHex32(tgi.group))
-            put("instance", formatHex32(tgi.instance))
-            put("kind", kind.name)
-            put("label", entry.tgi().label().takeIf(String::isNotBlank)?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
-            put("size", entry.size().toLong())
-            put("compressed", rawEntry?.compressed()?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
-            if (hint != null) {
-                put("exemplarName", hint.name?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
-                put("exemplarType", hint.exemplarType?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
-                put("objectClass", hint.objectClass)
-                putJsonArray("propertyIds") {
-                    hint.propertyIds.forEach { add(JsonPrimitive(formatHex32(it))) }
-                }
-            }
-        }
+        return IndexedEntry(
+            packagePath = file.absolutePathString(),
+            relativePath = root.relativize(file).toString(),
+            tgi = tgi,
+            kind = kind,
+            label = entry.tgi().label().takeIf(String::isNotBlank),
+            exemplarName = hint?.name,
+            exemplarType = hint?.exemplarType,
+            objectClass = hint?.objectClass,
+            propertyIds = hint?.propertyIds?.map(::formatHex32) ?: emptyList(),
+        )
     }
 
-    private fun exemplarHint(entry: StreamedEntry): IndexedExemplarHint? = runCatching {
+    private fun exemplarHint(
+        entry: StreamedEntry,
+        tgi: Tgi,
+        warnings: MutableList<String>,
+    ): IndexedExemplarHint? = try {
         val exemplar = decodeExemplarEntry(entry).content()
-        val properties = CollectionConverters.asJava(exemplar.properties()).entries.associate { (id, prop) ->
-            id.toLong() to prop
-        }
+        val properties = scalaMapEntries(exemplar.properties()).associate { (id, prop) -> id.toLong() to prop }
         val name = properties[0x20L]?.let(::propertyValues)?.firstOrNull()?.jsonPrimitive?.contentOrNull
-        val exemplarType = properties[0x10L]
+        val exemplarType = properties[EXEMPLAR_TYPE_PROPERTY_ID]
             ?.let(::propertyValues)
             ?.firstOrNull()
             ?.jsonPrimitive
@@ -272,31 +282,12 @@ internal class ScdbpfPluginIndexer {
             objectClass = objectClassFor(exemplarType, propertyIds),
             propertyIds = propertyIds,
         )
-    }.getOrNull()
-
-    @Suppress("UNCHECKED_CAST")
-    private fun decodeExemplarEntry(entry: StreamedEntry): BufferedEntry<Exemplar> {
-        val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
-        return buffered.convert(handler, Exemplar.converter()) as BufferedEntry<Exemplar>
-    }
-
-    private fun propertyValues(propertyList: DbpfProperty.PropertyList<*>): List<kotlinx.serialization.json.JsonElement> = when (propertyList) {
-        is DbpfProperty.Single<*> -> listOf(valueToJson(propertyList.value()))
-        is DbpfProperty.Multi<*> -> CollectionConverters.asJava(propertyList.values()).map(::valueToJson)
-        else -> listOf(JsonPrimitive(propertyList.toString()))
-    }
-
-    private fun valueToJson(value: Any?): kotlinx.serialization.json.JsonElement = when (value) {
-        null -> kotlinx.serialization.json.JsonNull
-        is String -> JsonPrimitive(value)
-        is Boolean -> JsonPrimitive(value)
-        is Int -> JsonPrimitive(value.toLong())
-        is Long -> JsonPrimitive(value)
-        is Float -> JsonPrimitive(value.toDouble())
-        is Double -> JsonPrimitive(value)
-        is io.github.memo33.passera.unsigned.UInt -> JsonPrimitive(value.toLong())
-        is io.github.memo33.passera.unsigned.UShort -> JsonPrimitive(value.toInt())
-        else -> JsonPrimitive(value.toString())
+    } catch (exception: Exception) {
+        // Indexed without a name or property IDs, so search_index cannot find it by those.
+        // Previously this was swallowed silently, which made the gap invisible.
+        warnings += "Indexed ${formatTgi(tgi)} without exemplar details: " +
+            (exception.message ?: exception::class.simpleName.orEmpty())
+        null
     }
 
     private fun matchEntry(
@@ -337,35 +328,85 @@ internal class ScdbpfPluginIndexer {
         )
     }
 
-    private fun readIndex(cachePath: Path): ParsedIndex {
-        var builtAt: Long? = null
+    /**
+     * Reads the JSONL cache, or returns null when it cannot be used.
+     *
+     * A cache can be unusable because it was written by an older format version, or because a
+     * previous run was interrupted mid-write and left a truncated final line. Neither is an
+     * error worth propagating: the caller is told to rebuild. Previously both cases threw an
+     * untyped exception on every subsequent call, and the only fix was deleting the file by hand.
+     */
+    private fun readIndexOrNull(cachePath: Path): ParsedIndex? = try {
+        var metadata: IndexMetadata? = null
         val entries = mutableListOf<IndexedEntry>()
         cachePath.readLines().forEach { line ->
-            if (line.isBlank()) return@forEach
-            val obj = json.parseToJsonElement(line).jsonObject
-            when (obj.string("recordType")) {
-                "metadata" -> builtAt = obj.long("builtAtEpochMillis")
-                "entry" -> entries += IndexedEntry(
-                    packagePath = obj.requiredString("packagePath"),
-                    relativePath = obj.requiredString("relativePath"),
-                    packageMtimeMillis = obj.long("packageMtimeMillis") ?: 0L,
-                    packageSize = obj.long("packageSize") ?: 0L,
-                    tgi = Tgi(
-                        type = parseHex(obj.requiredString("type")),
-                        group = parseHex(obj.requiredString("group")),
-                        instance = parseHex(obj.requiredString("instance")),
-                    ),
-                    kind = KnownEntryKind.valueOf(obj.requiredString("kind")),
-                    label = obj.string("label"),
-                    exemplarName = obj.string("exemplarName"),
-                    exemplarType = obj.string("exemplarType"),
-                    objectClass = obj.string("objectClass"),
-                    propertyIds = obj["propertyIds"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
-                )
+            if (line.isNotBlank()) {
+                when (val record = json.decodeFromString<IndexRecord>(line)) {
+                    is IndexMetadata -> metadata = record
+                    is IndexedEntry -> entries += record
+                }
             }
         }
-        return ParsedIndex(builtAt, entries)
+        metadata
+            ?.takeIf { it.formatVersion == INDEX_FORMAT_VERSION }
+            ?.let { ParsedIndex(it, entries) }
+    } catch (exception: Exception) {
+        null
     }
+
+    /**
+     * Writes to a sibling temp file and renames over the target.
+     *
+     * A direct write that is interrupted leaves a truncated final line, which then fails to parse
+     * on every later read. The rename is atomic where the filesystem supports it, so readers see
+     * either the old index or the new one.
+     */
+    private fun writeIndexAtomically(cachePath: Path, lines: List<String>) {
+        cachePath.parent.createDirectories()
+        val temp = Files.createTempFile(cachePath.parent, cachePath.name, ".tmp")
+        try {
+            temp.writeLines(lines)
+            try {
+                Files.move(temp, cachePath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temp, cachePath, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } catch (exception: Exception) {
+            Files.deleteIfExists(temp)
+            throw PackageError("Failed to write index cache ${cachePath.absolutePathString()}", exception)
+        }
+    }
+
+    /**
+     * Returns index statistics only when the cache is readable, covers exactly [files], and every
+     * one of those files is unchanged since it was indexed. Any difference — a modified package, a
+     * deleted one, or a newly added one — means the caller must rebuild.
+     */
+    private fun currentIndexOrNull(cachePath: Path, files: List<Path>): IndexFreshness? {
+        if (!cachePath.exists()) return null
+        val parsed = readIndexOrNull(cachePath) ?: return null
+        if (parsed.metadata.files.map(IndexedFile::path).toSet() != files.map(Path::absolutePathString).toSet()) {
+            return null
+        }
+        if (parsed.metadata.files.any(::fileChanged)) return null
+        return IndexFreshness(
+            fileCount = parsed.metadata.files.size,
+            entryCount = parsed.entries.size,
+            builtAtEpochMillis = parsed.metadata.builtAtEpochMillis,
+        )
+    }
+
+    /** True when an indexed package is gone or differs from what was recorded. */
+    private fun fileChanged(indexed: IndexedFile): Boolean {
+        val file = Path.of(indexed.path)
+        if (!Files.exists(file)) return true
+        val stat = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes::class.java)
+        return stat.lastModifiedTime().toMillis() != indexed.mtimeMillis || stat.size() != indexed.size
+    }
+
+    private fun staleIndexMessage(root: Path): String =
+        "Index for ${root.absolutePathString()} is missing, unreadable, or was written by an " +
+            "older version of dbpf-mcp; call index_plugins to rebuild it."
 
     private fun containerFiles(root: Path): List<Path> =
         Files.walk(root).use { stream ->
@@ -407,41 +448,6 @@ internal class ScdbpfPluginIndexer {
         return cacheRoot.resolve("$digest.jsonl")
     }
 
-    private fun tgiToDomain(tgi: ScTgi): Tgi = Tgi(
-        type = unsignedInt(tgi.tid()),
-        group = unsignedInt(tgi.gid()),
-        instance = unsignedInt(tgi.iid()),
-    )
-
-    private fun unsignedInt(value: Any): Long = (value as Number).toLong() and 0xFFFF_FFFFL
-
-    private fun formatTgi(tgi: Tgi): String =
-        "${formatHex32(tgi.type)}-${formatHex32(tgi.group)}-${formatHex32(tgi.instance)}"
-
-    private fun parseHex(value: String): Long = value.toULong(16).toLong()
-
-    private fun exemplarTypeLabel(value: Long): String? = when (value) {
-        0x0000000AL -> "Lot Configuration"
-        0x0000000BL -> "Network"
-        0x0000001EL -> "Prop"
-        0x00000021L -> "Network Lot (T21)"
-        else -> null
-    }
-
-    private fun objectClassFor(exemplarType: String?, propertyIds: List<Long>): String {
-        if (propertyIds.any { it in 0x88EDC900L..0x88EDCDFFL }) return "Lot"
-        if (propertyIds.any { it in setOf(0xE90E25A1L, 0xE90E25A2L, 0xE90E25A3L) }) return "Transit-enabled Building"
-        return exemplarType ?: "Exemplar"
-    }
-
-    private fun JsonObject.string(name: String): String? =
-        this[name]?.jsonPrimitive?.contentOrNull
-
-    private fun JsonObject.requiredString(name: String): String =
-        string(name) ?: throw PackageError("Corrupt index entry missing $name")
-
-    private fun JsonObject.long(name: String): Long? =
-        this[name]?.jsonPrimitive?.longOrNull
 }
 
 private data class IndexedExemplarHint(
@@ -457,21 +463,64 @@ internal sealed interface IndexedEntryLookup {
     data object NotFound : IndexedEntryLookup
 }
 
-private data class IndexedEntry(
-    val packagePath: String,
-    val relativePath: String,
-    val packageMtimeMillis: Long,
-    val packageSize: Long,
-    val tgi: Tgi,
-    val kind: KnownEntryKind,
-    val label: String?,
-    val exemplarName: String?,
-    val exemplarType: String?,
-    val objectClass: String?,
-    val propertyIds: List<String>,
+/**
+ * Bump when the on-disk record shape changes. A cache written by a different version is treated
+ * as absent rather than parsed on a best-effort basis.
+ */
+internal const val INDEX_FORMAT_VERSION: Int = 1
+
+/**
+ * One line of the JSONL cache. `recordType` is the discriminator, so kotlinx handles the dispatch
+ * that used to be a hand-written `when` over manually extracted fields.
+ */
+@Serializable
+@JsonClassDiscriminator("recordType")
+internal sealed class IndexRecord
+
+@Serializable
+@SerialName("metadata")
+internal data class IndexMetadata(
+    val formatVersion: Int = INDEX_FORMAT_VERSION,
+    val rootPath: String,
+    val builtAtEpochMillis: Long,
+    /**
+     * Every package the build considered, including ones that could not be parsed. Recording
+     * skipped files here is what lets a rebuild be skipped: a file that yields no entries is
+     * otherwise indistinguishable from a file that was never indexed.
+     */
+    val files: List<IndexedFile>,
+    val entryCount: Int,
+) : IndexRecord()
+
+@Serializable
+internal data class IndexedFile(
+    val path: String,
+    val mtimeMillis: Long,
+    val size: Long,
+    val skipped: Boolean = false,
 )
 
+@Serializable
+@SerialName("entry")
+internal data class IndexedEntry(
+    val packagePath: String,
+    val relativePath: String,
+    val tgi: Tgi,
+    val kind: KnownEntryKind,
+    val label: String? = null,
+    val exemplarName: String? = null,
+    val exemplarType: String? = null,
+    val objectClass: String? = null,
+    val propertyIds: List<String> = emptyList(),
+) : IndexRecord()
+
 private data class ParsedIndex(
-    val builtAtEpochMillis: Long?,
+    val metadata: IndexMetadata,
     val entries: List<IndexedEntry>,
+)
+
+private data class IndexFreshness(
+    val fileCount: Int,
+    val entryCount: Int,
+    val builtAtEpochMillis: Long,
 )
