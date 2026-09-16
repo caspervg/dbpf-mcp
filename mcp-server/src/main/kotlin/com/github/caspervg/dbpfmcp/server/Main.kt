@@ -1,9 +1,12 @@
 package com.github.caspervg.dbpfmcp.server
 
 import com.github.caspervg.dbpfmcp.backend.scdbpf.ScdbpfAdapter
+import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
 import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
 import com.github.caspervg.dbpfmcp.core.DbpfException
 import com.github.caspervg.dbpfmcp.core.ExemplarProperty
+import com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput
+import com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry
 import com.github.caspervg.dbpfmcp.core.ExportedFileModel
 import com.github.caspervg.dbpfmcp.core.ExportCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportExemplarTextRequest
@@ -37,6 +40,23 @@ import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
 import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.Tgi
 import com.github.caspervg.dbpfmcp.core.WriteLuaEntryRequest
+import com.github.caspervg.dbpfmcp.core.WriteLuaEntryResult
+import com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest
+import com.github.caspervg.dbpfmcp.core.WriteExemplarsResult
+import com.github.caspervg.dbpfmcp.core.LTextWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteLTextRequest
+import com.github.caspervg.dbpfmcp.core.WriteLTextResult
+import com.github.caspervg.dbpfmcp.core.FshElementInput
+import com.github.caspervg.dbpfmcp.core.FshWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteFshRequest
+import com.github.caspervg.dbpfmcp.core.WriteFshResult
+import com.github.caspervg.dbpfmcp.core.ReadIniRequest
+import com.github.caspervg.dbpfmcp.core.ReadIniResult
+import com.github.caspervg.dbpfmcp.core.WriteIniRequest
+import com.github.caspervg.dbpfmcp.core.WriteIniResult
+import com.github.caspervg.dbpfmcp.core.RawWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteRawEntriesRequest
+import com.github.caspervg.dbpfmcp.core.WriteRawEntriesResult
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.parseHexId
 import com.github.caspervg.dbpfmcp.semantics.parseTgi
@@ -66,6 +86,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -442,13 +463,13 @@ fun main(): Unit = runBlocking {
         }
         addTool(
             name = "write_lua_entry",
-            description = "Add or replace a text LUA entry in a DBPF package. Omitting outputPath rewrites the source package in-place.",
+            description = "Create or explicitly patch a DBPF package with one text LUA entry",
             inputSchema = writeLuaEntryInputSchema(),
             title = "Write LUA Entry",
             toolAnnotations = writeToolAnnotations("Write LUA Entry"),
         ) { request ->
             handleTool(json) {
-                writtenEntryJson(adapter.writeLuaEntry(parseWriteLuaEntryRequest(request)))
+                writeLuaEntryResultJson(adapter.writeLuaEntry(parseWriteLuaEntryRequest(request)))
             }
         }
         addTool(
@@ -744,6 +765,72 @@ fun main(): Unit = runBlocking {
             }
         }
         addTool(
+            name = "write_exemplars",
+            description = "Create a new DBPF package containing one or more exemplar/cohort entries with caller-specified properties",
+            inputSchema = writeExemplarsInputSchema(),
+            title = "Write Exemplars",
+            toolAnnotations = writeToolAnnotations("Write Exemplars"),
+        ) { request ->
+            handleTool(json) {
+                writeExemplarsResultJson(adapter.writeExemplars(parseWriteExemplarsRequest(request)))
+            }
+        }
+        addTool(
+            name = "write_ltext",
+            description = "Create a new DBPF package containing one or more LTEXT (localizable text) entries",
+            inputSchema = writeLTextInputSchema(),
+            title = "Write LTEXT",
+            toolAnnotations = writeToolAnnotations("Write LTEXT"),
+        ) { request ->
+            handleTool(json) {
+                writeLTextResultJson(adapter.writeLText(parseWriteLTextRequest(request)))
+            }
+        }
+        addTool(
+            name = "write_fsh",
+            description = "Create a new DBPF package containing one or more FSH texture entries encoded from PNG images",
+            inputSchema = writeFshInputSchema(),
+            title = "Write FSH",
+            toolAnnotations = writeToolAnnotations("Write FSH"),
+        ) { request ->
+            handleTool(json) {
+                writeFshResultJson(adapter.writeFsh(parseWriteFshRequest(request)))
+            }
+        }
+        addTool(
+            name = "write_raw_entries",
+            description = "Create a new DBPF package containing one or more raw-byte entries for any TGI, no format decoding required",
+            inputSchema = writeRawEntriesInputSchema(),
+            title = "Write Raw Entries",
+            toolAnnotations = writeToolAnnotations("Write Raw Entries"),
+        ) { request ->
+            handleTool(json) {
+                writeRawEntriesResultJson(adapter.writeRawEntries(parseWriteRawEntriesRequest(request)))
+            }
+        }
+        addTool(
+            name = "read_ini",
+            description = "Read a Network INI resource from a DBPF package by TGI as exact text",
+            inputSchema = readIniInputSchema(),
+            title = "Read INI",
+            toolAnnotations = readOnlyToolAnnotations("Read INI"),
+        ) { request ->
+            handleTool(json) {
+                readIniResultJson(adapter.readIni(parseReadIniRequest(request)))
+            }
+        }
+        addTool(
+            name = "write_ini",
+            description = "Install exact Network INI text as an entry in a DBPF package",
+            inputSchema = writeIniInputSchema(),
+            title = "Write INI",
+            toolAnnotations = writeToolAnnotations("Write INI"),
+        ) { request ->
+            handleTool(json) {
+                writeIniResultJson(adapter.writeIni(parseWriteIniRequest(request)))
+            }
+        }
+        addTool(
             name = "describe_property",
             description = "Describe one SC4 property from the bundled property registry",
             inputSchema = describePropertyInputSchema(),
@@ -796,6 +883,27 @@ fun main(): Unit = runBlocking {
                             )
                         }
                     }
+                }
+            }
+        }
+        addTool(
+            name = "decode_qfs",
+            description = "Decode a raw QFS/EA RefPack payload from base64, with optional DBPF compressed-size prefix detection",
+            inputSchema = decodeQfsInputSchema(),
+            title = "Decode QFS Payload",
+            toolAnnotations = readOnlyToolAnnotations("Decode QFS Payload"),
+        ) { request ->
+            handleTool(json) {
+                val result = adapter.decodeQfs(parseDecodeQfsRequest(request))
+                buildJsonObject {
+                    put("compressedSize", result.compressedSize)
+                    put("decodedSize", result.decodedSize)
+                    put("declaredDecodedSize", result.declaredDecodedSize)
+                    put("hasDbpfSizePrefix", result.hasDbpfSizePrefix)
+                    put("extendedHeader", result.extendedHeader)
+                    put("payloadBase64", result.payloadBase64)
+                    put("payloadHexPreview", result.payloadHexPreview)
+                    put("utf8Preview", result.utf8Preview?.let(::JsonPrimitive) ?: JsonNull)
                 }
             }
         }
@@ -1059,13 +1167,14 @@ private fun parseExportLuaTextRequest(request: CallToolRequest): ExportLuaTextRe
 }
 
 private fun parseWriteLuaEntryRequest(request: CallToolRequest): WriteLuaEntryRequest {
-    val (path, tgi) = parseReadEntryRequest(request)
+    val args = request.arguments
     return WriteLuaEntryRequest(
-        path = path,
-        tgi = tgi,
-        text = request.arguments.requiredString("text"),
-        outputPath = request.arguments.optionalString("outputPath"),
-        compress = request.arguments.optionalBoolean("compress") ?: true,
+        outputPath = args.requiredString("outputPath"),
+        tgi = parseTgi(args.requiredString("tgi")),
+        text = args.requiredString("text"),
+        compressed = args.optionalBoolean("compressed") ?: true,
+        overwrite = args.optionalBoolean("overwrite") ?: false,
+        merge = args.optionalBoolean("merge") ?: false,
     )
 }
 
@@ -1141,6 +1250,18 @@ private fun parseDecodePropertyValueRequest(request: CallToolRequest): DecodePro
     )
 }
 
+private fun parseDecodeQfsRequest(request: CallToolRequest): DecodeQfsRequest =
+    DecodeQfsRequest(
+        payloadBase64 = request.arguments.requiredString("payloadBase64"),
+        maxBytes = request.arguments.optionalIntInRange(
+            "maxBytes",
+            min = 1,
+            max = MAX_ENTRY_PREVIEW_BYTES,
+            default = DEFAULT_RAW_MAX_BYTES,
+        ),
+        hasDbpfSizePrefix = request.arguments.optionalBoolean("hasDbpfSizePrefix"),
+    )
+
 private fun parseReadRawEntryRequest(request: CallToolRequest): ReadRawEntryRequest {
     val (path, tgi) = parseReadEntryRequest(request)
     return ReadRawEntryRequest(
@@ -1186,6 +1307,113 @@ private fun parseReadTabBinaryRequest(request: CallToolRequest): ReadTabBinaryRe
             max = MAX_TAB_WORDS,
             default = DEFAULT_TAB_MAX_WORDS,
         ),
+    )
+}
+
+private fun parseWriteExemplarsRequest(request: CallToolRequest): WriteExemplarsRequest {
+    val args = request.arguments
+    val entries = args.requiredArray("entries").map { element -> parseExemplarWriteEntry(element.jsonObject) }
+    return WriteExemplarsRequest(
+        outputPath = args.requiredString("outputPath"),
+        entries = entries,
+        compressed = args.optionalBoolean("compressed") ?: true,
+        overwrite = args.optionalBoolean("overwrite") ?: false,
+        merge = args.optionalBoolean("merge") ?: false,
+        validateAgainstRegistry = args.optionalBoolean("validateAgainstRegistry") ?: true,
+    )
+}
+
+private fun parseExemplarWriteEntry(obj: JsonObject): ExemplarWriteEntry =
+    ExemplarWriteEntry(
+        tgi = parseTgi(obj.requiredString("tgi")),
+        isCohort = obj.optionalBoolean("isCohort") ?: false,
+        parentCohort = obj.optionalString("parentCohortTgi")?.let(::parseTgi),
+        properties = obj.requiredArray("properties").map { element -> parseExemplarPropertyInput(element.jsonObject) },
+    )
+
+private fun parseExemplarPropertyInput(obj: JsonObject): ExemplarPropertyInput =
+    ExemplarPropertyInput(
+        id = parseHexId(obj.requiredString("id"), "id"),
+        type = obj.optionalString("type"),
+        values = obj.requiredArray("values"),
+    )
+
+private fun parseWriteLTextRequest(request: CallToolRequest): WriteLTextRequest {
+    val args = request.arguments
+    val entries = args.requiredArray("entries").map { element -> parseLTextWriteEntry(element.jsonObject) }
+    return WriteLTextRequest(
+        outputPath = args.requiredString("outputPath"),
+        entries = entries,
+        compressed = args.optionalBoolean("compressed") ?: true,
+        overwrite = args.optionalBoolean("overwrite") ?: false,
+        merge = args.optionalBoolean("merge") ?: false,
+    )
+}
+
+private fun parseLTextWriteEntry(obj: JsonObject): LTextWriteEntry =
+    LTextWriteEntry(
+        tgi = parseTgi(obj.requiredString("tgi")),
+        text = obj.requiredString("text"),
+    )
+
+private fun parseWriteFshRequest(request: CallToolRequest): WriteFshRequest {
+    val args = request.arguments
+    val entries = args.requiredArray("entries").map { element -> parseFshWriteEntry(element.jsonObject) }
+    return WriteFshRequest(
+        outputPath = args.requiredString("outputPath"),
+        entries = entries,
+        compressed = args.optionalBoolean("compressed") ?: true,
+        overwrite = args.optionalBoolean("overwrite") ?: false,
+        merge = args.optionalBoolean("merge") ?: false,
+    )
+}
+
+private fun parseFshWriteEntry(obj: JsonObject): FshWriteEntry =
+    FshWriteEntry(
+        tgi = parseTgi(obj.requiredString("tgi")),
+        dirId = obj.optionalString("dirId") ?: "G264",
+        elements = obj.requiredArray("elements").map { element -> parseFshElementInput(element.jsonObject) },
+    )
+
+private fun parseFshElementInput(obj: JsonObject): FshElementInput =
+    FshElementInput(
+        format = obj.requiredString("format"),
+        label = obj.optionalString("label"),
+        imagesPngBase64 = obj.requiredArray("imagesPngBase64").map { it.jsonPrimitive.content },
+    )
+
+private fun parseWriteRawEntriesRequest(request: CallToolRequest): WriteRawEntriesRequest {
+    val args = request.arguments
+    val entries = args.requiredArray("entries").map { element -> parseRawWriteEntry(element.jsonObject) }
+    return WriteRawEntriesRequest(
+        outputPath = args.requiredString("outputPath"),
+        entries = entries,
+        compressed = args.optionalBoolean("compressed") ?: true,
+        overwrite = args.optionalBoolean("overwrite") ?: false,
+        merge = args.optionalBoolean("merge") ?: false,
+    )
+}
+
+private fun parseRawWriteEntry(obj: JsonObject): RawWriteEntry =
+    RawWriteEntry(
+        tgi = parseTgi(obj.requiredString("tgi")),
+        payloadBase64 = obj.requiredString("payloadBase64"),
+    )
+
+private fun parseReadIniRequest(request: CallToolRequest): ReadIniRequest {
+    val (path, tgi) = parseReadEntryRequest(request)
+    return ReadIniRequest(path = path, tgi = tgi)
+}
+
+private fun parseWriteIniRequest(request: CallToolRequest): WriteIniRequest {
+    val args = request.arguments
+    return WriteIniRequest(
+        outputPath = args.requiredString("outputPath"),
+        tgi = parseTgi(args.requiredString("tgi")),
+        text = args.requiredString("text"),
+        compressed = args.optionalBoolean("compressed") ?: true,
+        overwrite = args.optionalBoolean("overwrite") ?: false,
+        merge = args.optionalBoolean("merge") ?: false,
     )
 }
 
@@ -1343,6 +1571,51 @@ private fun textEntryJson(text: com.github.caspervg.dbpfmcp.core.TextEntryModel)
     put("text", text.text)
 }
 
+private fun writeExemplarsResultJson(result: WriteExemplarsResult): JsonObject = buildJsonObject {
+    put("outputPath", result.outputPath)
+    put("entryCount", result.entryCount)
+    put("bytesWritten", result.bytesWritten)
+    putJsonArray("warnings") {
+        result.warnings.forEach { add(JsonPrimitive(it)) }
+    }
+}
+
+private fun writeLTextResultJson(result: WriteLTextResult): JsonObject = buildJsonObject {
+    put("outputPath", result.outputPath)
+    put("entryCount", result.entryCount)
+    put("bytesWritten", result.bytesWritten)
+}
+
+private fun writeFshResultJson(result: WriteFshResult): JsonObject = buildJsonObject {
+    put("outputPath", result.outputPath)
+    put("entryCount", result.entryCount)
+    put("bytesWritten", result.bytesWritten)
+    putJsonArray("warnings") {
+        result.warnings.forEach { add(JsonPrimitive(it)) }
+    }
+}
+
+private fun writeRawEntriesResultJson(result: WriteRawEntriesResult): JsonObject = buildJsonObject {
+    put("outputPath", result.outputPath)
+    put("entryCount", result.entryCount)
+    put("bytesWritten", result.bytesWritten)
+}
+
+private fun readIniResultJson(result: ReadIniResult): JsonObject = buildJsonObject {
+    put("path", result.path)
+    put("tgi", tgiJson(result.tgi))
+    put("compressed", result.compressed)
+    put("size", result.size)
+    put("text", result.text)
+}
+
+private fun writeIniResultJson(result: WriteIniResult): JsonObject = buildJsonObject {
+    put("outputPath", result.outputPath)
+    put("tgi", tgiJson(result.tgi))
+    put("entryCount", result.entryCount)
+    put("bytesWritten", result.bytesWritten)
+}
+
 private fun exportedFileJson(file: ExportedFileModel): JsonObject = buildJsonObject {
     put("tgi", tgiJson(file.tgi))
     put("kind", file.kind.name)
@@ -1351,14 +1624,11 @@ private fun exportedFileJson(file: ExportedFileModel): JsonObject = buildJsonObj
     put("bytesWritten", file.bytesWritten)
 }
 
-private fun writtenEntryJson(file: com.github.caspervg.dbpfmcp.core.WrittenEntryModel): JsonObject = buildJsonObject {
-    put("packagePath", file.packagePath)
-    put("tgi", tgiJson(file.tgi))
-    put("kind", file.kind.name)
-    put("format", file.format)
-    put("payloadBytes", file.payloadBytes)
-    put("packageBytesWritten", file.packageBytesWritten)
-    put("replaced", file.replaced)
+private fun writeLuaEntryResultJson(result: WriteLuaEntryResult): JsonObject = buildJsonObject {
+    put("outputPath", result.outputPath)
+    put("tgi", tgiJson(result.tgi))
+    put("entryCount", result.entryCount)
+    put("bytesWritten", result.bytesWritten)
 }
 
 private fun parseKnownEntryKind(value: String): KnownEntryKind = try {
@@ -1380,7 +1650,7 @@ private fun readOnlyToolAnnotations(title: String) = ToolAnnotations(
 private fun writeToolAnnotations(title: String) = ToolAnnotations(
     title = title,
     readOnlyHint = false,
-    destructiveHint = false,
+    destructiveHint = true,
     idempotentHint = true,
     openWorldHint = false,
 )
@@ -1600,40 +1870,54 @@ private fun readRawEntryInputSchema(): Tool.Input = Tool.Input(
 
 private fun writeLuaEntryInputSchema(): Tool.Input = Tool.Input(
     properties = buildJsonObject {
-        putJsonObject("path") {
+        putJsonObject("outputPath") {
             put("type", "string")
-            put("description", "Filesystem path to one DBPF package file, not a Plugins folder.")
+            put("description", "Filesystem path where the DBPF package will be written.")
+        }
+        putJsonObject("overwrite") {
+            put("type", "boolean")
+            put("description", "Allow fully replacing an existing file at outputPath. Ignored if merge=true. Default: false.")
+        }
+        putJsonObject("merge") {
+            put("type", "boolean")
+            put(
+                "description",
+                "Patch package mode: if outputPath exists, preserve all other DBPF entries and replace or append " +
+                    "this entry by TGI. Default: false.",
+            )
+        }
+        putJsonObject("compressed") {
+            put("type", "boolean")
+            put("description", "Store the LUA entry QFS-compressed. Default: true.")
         }
         putJsonObject("tgi") {
             put("type", "string")
             put("description", "Full LUA TGI as hexadecimal type-group-instance. Type must be CA63E2A3.")
         }
-        putJsonObject("type") {
-            put("type", "string")
-            put("description", "TGI type as hexadecimal. Must be CA63E2A3 for LUA.")
-        }
-        putJsonObject("group") {
-            put("type", "string")
-            put("description", "TGI group as hexadecimal.")
-        }
-        putJsonObject("instance") {
-            put("type", "string")
-            put("description", "TGI instance as hexadecimal.")
-        }
         putJsonObject("text") {
             put("type", "string")
             put("description", "Lua source text to store as the DBPF entry payload.")
         }
-        putJsonObject("outputPath") {
+    },
+    required = listOf("outputPath", "tgi", "text"),
+)
+
+private fun decodeQfsInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("payloadBase64") {
             put("type", "string")
-            put("description", "Optional output DBPF path. If omitted, the source package is rewritten in-place.")
+            put("description", "Base64 raw QFS stream. DBPF entry bodies may include a 4-byte compressed-size prefix before the QFS header.")
         }
-        putJsonObject("compress") {
+        putJsonObject("maxBytes") {
+            put("type", "integer")
+            put("description", "Maximum decoded bytes to return as base64/hex preview, 1-$MAX_ENTRY_PREVIEW_BYTES. Default: $DEFAULT_RAW_MAX_BYTES.")
+        }
+        putJsonObject("hasDbpfSizePrefix") {
             put("type", "boolean")
-            put("description", "Whether to store the new LUA entry compressed when beneficial. Default: true.")
+            put("description", "Set true when payloadBase64 includes the DBPF 4-byte compressed-size prefix. Omit to auto-detect.")
         }
     },
-    required = listOf("path", "text"),
+    required = listOf("payloadBase64"),
 )
 
 private fun readKeyCfgInputSchema(): Tool.Input = Tool.Input(
@@ -1760,6 +2044,346 @@ private fun exportFshPngInputSchema(): Tool.Input = Tool.Input(
         }
     },
     required = listOf("path", "outputPath"),
+)
+
+private fun writeExemplarsInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("outputPath") {
+            put("type", "string")
+            put("description", "Filesystem path where the new DBPF package will be written.")
+        }
+        putJsonObject("overwrite") {
+            put("type", "boolean")
+            put("description", "Allow fully replacing an existing file at outputPath. Ignored if merge=true. Default: false.")
+        }
+        putJsonObject("merge") {
+            put("type", "boolean")
+            put(
+                "description",
+                "Patch mode: if outputPath already exists, keep its other entries and replace/append only the " +
+                    "entries listed here (matched by TGI). If outputPath does not exist yet, behaves like a fresh create. Default: false.",
+            )
+        }
+        putJsonObject("compressed") {
+            put("type", "boolean")
+            put("description", "Store entries QFS-compressed. Default: true.")
+        }
+        putJsonObject("validateAgainstRegistry") {
+            put("type", "boolean")
+            put(
+                "description",
+                "Cross-check property ids/types and TGI-type-vs-isCohort against the bundled SC4 property " +
+                    "registry, returning non-fatal warnings in the response. Declaring a property's type explicitly " +
+                    "always overrides the registry (no error), so unknown/custom properties and non-standard TGI " +
+                    "types can still be written; this only adds warnings, never blocks the write. Default: true.",
+            )
+        }
+        putJsonObject("entries") {
+            put("type", "array")
+            put("description", "One or more exemplar/cohort entries to write.")
+            putJsonObject("items") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("tgi") {
+                        put("type", "string")
+                        put("description", "Full TGI as hexadecimal type-group-instance, for example 6534284A-00000000-12345678.")
+                    }
+                    putJsonObject("isCohort") {
+                        put("type", "boolean")
+                        put("description", "True to write a cohort (CQZB) instead of an exemplar (EQZB). Default: false.")
+                    }
+                    putJsonObject("parentCohortTgi") {
+                        put("type", "string")
+                        put("description", "Optional parent cohort TGI as hexadecimal type-group-instance. Defaults to blank (00000000-00000000-00000000).")
+                    }
+                    putJsonObject("properties") {
+                        put("type", "array")
+                        put("description", "Exemplar properties to write.")
+                        putJsonObject("items") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("id") {
+                                    put("type", "string")
+                                    put("description", "Property ID as hexadecimal, for example 0x00000020.")
+                                }
+                                putJsonObject("type") {
+                                    put("type", "string")
+                                    put(
+                                        "description",
+                                        "One of Uint8, Uint16, Uint32, Sint32, Sint64, Float32, Bool, String, Tgi. " +
+                                            "Optional: if omitted, the type is inferred from the bundled SC4 property " +
+                                            "registry by id; if the id is unknown to the registry, type is required. " +
+                                            "Declaring type explicitly always overrides the registry, so custom/modded " +
+                                            "properties are supported. Tgi values are 3-element [type, group, instance] " +
+                                            "arrays (integer or 0x-prefixed hex), one array per resource key; encoded as " +
+                                            "repeating Uint32 triplets, matching resource-key properties like 0x27812820.",
+                                    )
+                                }
+                                putJsonObject("values") {
+                                    put("type", "array")
+                                    put(
+                                        "description",
+                                        "One value for a Single property, or 2+ values for a repeating (Multi) " +
+                                            "property. String type must have exactly one value. Integers accept " +
+                                            "plain numbers or 0x-prefixed hex strings. Tgi type expects an array of " +
+                                            "[type, group, instance] arrays.",
+                                    )
+                                }
+                            }
+                            putJsonArray("required") {
+                                add(JsonPrimitive("id"))
+                                add(JsonPrimitive("values"))
+                            }
+                        }
+                    }
+                }
+                putJsonArray("required") {
+                    add(JsonPrimitive("tgi"))
+                    add(JsonPrimitive("properties"))
+                }
+            }
+        }
+    },
+    required = listOf("outputPath", "entries"),
+)
+
+private fun writeLTextInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("outputPath") {
+            put("type", "string")
+            put("description", "Filesystem path where the new DBPF package will be written.")
+        }
+        putJsonObject("overwrite") {
+            put("type", "boolean")
+            put("description", "Allow fully replacing an existing file at outputPath. Ignored if merge=true. Default: false.")
+        }
+        putJsonObject("merge") {
+            put("type", "boolean")
+            put(
+                "description",
+                "Patch mode: if outputPath already exists, keep its other entries and replace/append only the " +
+                    "entries listed here (matched by TGI). Default: false.",
+            )
+        }
+        putJsonObject("compressed") {
+            put("type", "boolean")
+            put("description", "Store entries QFS-compressed. Default: true.")
+        }
+        putJsonObject("entries") {
+            put("type", "array")
+            put("description", "One or more LTEXT entries to write. Always encoded as UTF-16 LTEXT (the standard SC4 localizable-text format).")
+            putJsonObject("items") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("tgi") {
+                        put("type", "string")
+                        put("description", "Full TGI as hexadecimal type-group-instance, for example 2026960B-00000000-12345678.")
+                    }
+                    putJsonObject("text") {
+                        put("type", "string")
+                        put("description", "The text content to encode.")
+                    }
+                }
+                putJsonArray("required") {
+                    add(JsonPrimitive("tgi"))
+                    add(JsonPrimitive("text"))
+                }
+            }
+        }
+    },
+    required = listOf("outputPath", "entries"),
+)
+
+private fun writeFshInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("outputPath") {
+            put("type", "string")
+            put("description", "Filesystem path where the new DBPF package will be written.")
+        }
+        putJsonObject("overwrite") {
+            put("type", "boolean")
+            put("description", "Allow fully replacing an existing file at outputPath. Ignored if merge=true. Default: false.")
+        }
+        putJsonObject("merge") {
+            put("type", "boolean")
+            put(
+                "description",
+                "Patch mode: if outputPath already exists, keep its other entries and replace/append only the " +
+                    "entries listed here (matched by TGI). Default: false.",
+            )
+        }
+        putJsonObject("compressed") {
+            put("type", "boolean")
+            put("description", "Store entries QFS-compressed. Default: true.")
+        }
+        putJsonObject("entries") {
+            put("type", "array")
+            put("description", "One or more FSH texture entries to write.")
+            putJsonObject("items") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("tgi") {
+                        put("type", "string")
+                        put("description", "Full TGI as hexadecimal type-group-instance, for example 7AB50E44-1ABE787D-00000001.")
+                    }
+                    putJsonObject("dirId") {
+                        put("type", "string")
+                        put(
+                            "description",
+                            "FSH directory id: G354 (building textures), G264 (network/sim/prop/base textures, most " +
+                                "common), G266 (3D animation textures), G290 (dispatch markers), G315 (small sim / " +
+                                "transport model textures), GIMX (UI editor), G344 (BAT gen texture maps), or " +
+                                "G231/G341/G349/G352/G357 (rare/unknown). Default: G264.",
+                        )
+                    }
+                    putJsonObject("elements") {
+                        put("type", "array")
+                        put("description", "One or more FSH elements (mip chains) in this entry.")
+                        putJsonObject("items") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("format") {
+                                    put("type", "string")
+                                    put(
+                                        "description",
+                                        "One of Dxt1, Dxt3, A8R8G8B8, A0R8G8B8, A1R5G5B5, A0R5G6B5, A4R4G4B4. " +
+                                            "Dxt1/Dxt3 require image width and height to be multiples of 4. " +
+                                            "(Dxt5 encoding is not supported by the bundled scdbpf version; decoding " +
+                                            "existing Dxt5 entries via read_fsh/export_fsh_png is unaffected.)",
+                                    )
+                                }
+                                putJsonObject("label") {
+                                    put("type", "string")
+                                    put("description", "Optional element label attachment.")
+                                }
+                                putJsonObject("imagesPngBase64") {
+                                    put("type", "array")
+                                    put(
+                                        "description",
+                                        "One or more base64-encoded PNG images forming the mip chain, ordered from " +
+                                            "mip 0 (full resolution) downward. Each subsequent image must be exactly " +
+                                            "half the width and height (rounded down, minimum 1) of the previous one. " +
+                                            "A single image (mip 0 only) is valid and means no additional mip levels.",
+                                    )
+                                    putJsonObject("items") {
+                                        put("type", "string")
+                                    }
+                                }
+                            }
+                            putJsonArray("required") {
+                                add(JsonPrimitive("format"))
+                                add(JsonPrimitive("imagesPngBase64"))
+                            }
+                        }
+                    }
+                }
+                putJsonArray("required") {
+                    add(JsonPrimitive("tgi"))
+                    add(JsonPrimitive("elements"))
+                }
+            }
+        }
+    },
+    required = listOf("outputPath", "entries"),
+)
+
+private fun writeRawEntriesInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("outputPath") {
+            put("type", "string")
+            put("description", "Filesystem path where the new DBPF package will be written.")
+        }
+        putJsonObject("overwrite") {
+            put("type", "boolean")
+            put("description", "Allow fully replacing an existing file at outputPath. Ignored if merge=true. Default: false.")
+        }
+        putJsonObject("merge") {
+            put("type", "boolean")
+            put(
+                "description",
+                "Patch mode: if outputPath already exists, keep its other entries and replace/append only the " +
+                    "entries listed here (matched by TGI). Default: false.",
+            )
+        }
+        putJsonObject("compressed") {
+            put("type", "boolean")
+            put("description", "Store entries QFS-compressed. Default: true.")
+        }
+        putJsonObject("entries") {
+            put("type", "array")
+            put(
+                "description",
+                "One or more entries to write verbatim, for any TGI. No format decoding/validation is applied; " +
+                    "use this for KEYCFG, TAB, RUL, EFFDIR, PNG, or any entry without a dedicated write tool.",
+            )
+            putJsonObject("items") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("tgi") {
+                        put("type", "string")
+                        put("description", "Full TGI as hexadecimal type-group-instance.")
+                    }
+                    putJsonObject("payloadBase64") {
+                        put("type", "string")
+                        put("description", "Base64-encoded raw (uncompressed) entry bytes.")
+                    }
+                }
+                putJsonArray("required") {
+                    add(JsonPrimitive("tgi"))
+                    add(JsonPrimitive("payloadBase64"))
+                }
+            }
+        }
+    },
+    required = listOf("outputPath", "entries"),
+)
+
+private fun readIniInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("path") {
+            put("type", "string")
+            put("description", "Filesystem path to one DBPF package containing the Network INI resource.")
+        }
+        putJsonObject("tgi") {
+            put("type", "string")
+            put("description", "Full Network INI TGI as hexadecimal type-group-instance.")
+        }
+    },
+    required = listOf("path", "tgi"),
+)
+
+private fun writeIniInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("outputPath") {
+            put("type", "string")
+            put("description", "Filesystem path where the DBPF package will be written.")
+        }
+        putJsonObject("overwrite") {
+            put("type", "boolean")
+            put("description", "Allow fully replacing an existing file at outputPath. Ignored if merge=true. Default: false.")
+        }
+        putJsonObject("merge") {
+            put("type", "boolean")
+            put(
+                "description",
+                "Patch package mode: if outputPath exists, preserve all other DBPF entries and replace or append " +
+                    "this entry by TGI. Default: false.",
+            )
+        }
+        putJsonObject("compressed") {
+            put("type", "boolean")
+            put("description", "Store the Network INI entry QFS-compressed. Default: true.")
+        }
+        putJsonObject("tgi") {
+            put("type", "string")
+            put("description", "Full Network INI TGI as hexadecimal type-group-instance.")
+        }
+        putJsonObject("text") {
+            put("type", "string")
+            put("description", "Exact Network INI text; ordering, duplicate keys, comments, and line content are preserved.")
+        }
+    },
+    required = listOf("outputPath", "tgi", "text"),
 )
 
 private fun describePropertyInputSchema(): Tool.Input = Tool.Input(

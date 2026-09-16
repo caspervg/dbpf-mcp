@@ -130,10 +130,16 @@ internal class ScdbpfEntryExplainer {
 
     private fun explainLua(path: String, entry: StreamedEntry, tgi: Tgi): ExplainEntryResult {
         val raw = entry.toRawEntry(handler) as RawEntry
-        val bytes = io.github.memo33.scdbpf.compat.Input.slurpBytes(raw.input(), handler) as ByteArray
-        val preview = bytes.copyOf(minOf(bytes.size, 240))
-            .toString(StandardCharsets.UTF_8)
-            .takeIf { text -> text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
+        val bytes = decodeTextEntryPayload(
+            io.github.memo33.scdbpf.compat.Input.slurpBytes(raw.input(), handler) as ByteArray,
+            tgi,
+        )
+        val preview = try {
+            StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString().take(240)
+                .takeIf { text -> text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
+        } catch (_: java.nio.charset.CharacterCodingException) {
+            null
+        }
         return ExplainEntryResult(
             packagePath = File(path).absolutePath,
             tgi = tgi,

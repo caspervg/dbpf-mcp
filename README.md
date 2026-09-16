@@ -1,10 +1,12 @@
 # dbpf-mcp
 
-`dbpf-mcp` is a Kotlin/JVM Model Context Protocol server for inspecting SimCity 4 DBPF packages. It exposes read-only tools for listing package entries, indexing Plugins folders, decoding common SC4 resource types, and exporting selected decoded resources to text or image files.
+`dbpf-mcp` is a Kotlin/JVM Model Context Protocol server for reading and writing SimCity 4 DBPF packages. It exposes tools for listing package entries, indexing Plugins folders, decoding common SC4 resource types, exporting decoded resources to text or image files, and creating/patching new DBPF packages (exemplars, cohorts, LTEXT, Lua, FSH textures, Network INI resources, and raw entries).
 
 The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 
 ## Features
+
+### Read
 
 - List and summarize DBPF package entries with stable TGI metadata.
 - Inspect one package for notable entries, SC4 object hints, and recommended next tools.
@@ -12,9 +14,21 @@ The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 - Decode exemplars and cohorts as semantic JSON with property names, type hints, decoded values, resource keys, and optional parent cohort resolution.
 - Render exemplars and cohorts as canonical SC4 text-exemplar syntax, either in-memory or exported to disk.
 - Decode SC4PATHS entries as JSON or canonical path text, either in-memory or exported to disk.
-- Decode LTEXT, S3D metadata, FSH metadata, image entries, and raw entry previews.
+- Decode LTEXT, text Lua, S3D metadata, FSH metadata, image entries, and raw entry previews.
 - Export selected FSH bitmap images as PNG files.
 - Decode individual exemplar property values for quick property interpretation.
+- Read a Network INI resource (`read_ini`) from a DBPF package by TGI, including QFS-compressed entries such as `00000000-8A5971C5-8A5993B9`.
+
+### Write
+
+- `write_exemplars`: create a DBPF package with new exemplar/cohort entries and caller-specified properties (Uint8/16/32, Sint32/64, Float32, Bool, String, and Tgi resource-key triplets). Property type can be inferred from the bundled SC4 property registry or declared explicitly (an explicit type always overrides the registry, so custom/modded properties are supported). Optional non-fatal `warnings` surface inferred/mismatched types.
+- `write_ltext`: create a DBPF package with new LTEXT (localizable text) entries.
+- `write_lua_entry`: create a package with one text Lua entry, or explicitly patch an existing package with `merge: true`.
+- `write_fsh`: create a DBPF package with new FSH texture entries encoded from PNG images. Supports Dxt1, Dxt3, A8R8G8B8, A0R8G8B8, A1R5G5B5, A0R5G6B5, A4R4G4B4, multiple elements per entry, and caller-supplied mip chains. Dxt5 encoding is not supported by the bundled scdbpf version (decoding Dxt5 via `read_fsh`/`export_fsh_png` is unaffected).
+- `write_raw_entries`: write arbitrary bytes to any TGI with no format decoding, for entry kinds without a dedicated encoder (KEYCFG, TAB, RUL, EFFDIR, PNG, etc.).
+- `write_ini`: install exact Network INI text at a caller-specified TGI in a new or existing DBPF package. `merge: true` preserves unrelated package entries and replaces the matching TGI.
+
+Package creation tools accept `outputPath`, `overwrite` (replace an existing file entirely), and `merge` (keep existing entries not addressed by the request and replace/append by TGI). They also accept `compressed` (QFS-compress new entries, default true) and reject duplicate TGIs within one request.
 
 Experimental tools:
 
@@ -101,8 +115,10 @@ Typical workflow:
 1. Use `index_plugins` with a Plugins folder path, for example `~/Documents/SimCity 4/Plugins`.
 2. Use `search_index` to find candidate entries by TGI, resource kind, exemplar name, object class, or property ID.
 3. Use `inspect_package`, `summarize_package`, or `list_entries` on a specific `.dat`, `.SC4Lot`, `.SC4Model`, or `.SC4Desc` file.
-4. Use focused readers such as `read_exemplar`, `read_cohort`, `read_sc4paths`, `read_fsh`, `read_s3d`, or `read_ltext`.
-5. Use export tools such as `export_exemplar_text`, `export_cohort_text`, `export_sc4paths_text`, `export_sc4paths_json`, or `export_fsh_png` when you want files written to disk.
+4. Use focused readers such as `read_exemplar`, `read_cohort`, `read_sc4paths`, `read_fsh`, `read_s3d`, `read_ltext`, or `read_lua`.
+5. Use export tools such as `export_exemplar_text`, `export_cohort_text`, `export_sc4paths_text`, `export_sc4paths_json`, `export_lua_text`, or `export_fsh_png` when you want files written to disk.
+6. Use write tools such as `write_exemplars`, `write_ltext`, `write_lua_entry`, `write_fsh`, or `write_raw_entries` to create or update a `.dat`.
+7. Use `read_ini` / `write_ini` for Network INI text stored directly in DBPF entries.
 
 TGI arguments can be supplied either as one string:
 
@@ -134,8 +150,11 @@ or as separate `type`, `group`, and `instance` hex values.
 - This is still in development. Tool output schemas may still evolve.
 - Folder-wide scanning happens only through `index_plugins`; other tools expect one DBPF package path.
 - Cross-package parent cohort resolution requires a current Plugins index and is limited to entries present in that index.
-- S3D support reports model metadata, mesh group summaries, materials, and animation metadata; it does not export full geometry.
+- S3D support reports model metadata, mesh group summaries, materials, and animation metadata; it does not export full geometry, and there is no `write_s3d`.
 - `read_keycfg` and `read_tab_binary` are not finished.
+- `write_fsh` cannot encode Dxt5 (the bundled scdbpf version only supports Dxt5 decode) and does not generate mip levels automatically; callers must supply each mip image pre-downscaled.
+- `write_ltext` always encodes UTF-16 LTEXT; other LTEXT formats are not selectable in the bundled scdbpf version.
+- `write_ini` stores the supplied text exactly; it does not parse, normalize, reorder, or deduplicate Network INI rules.
 
 ## Common commands
 

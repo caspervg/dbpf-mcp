@@ -1,6 +1,7 @@
 package com.github.caspervg.dbpfmcp.backend.scdbpf
 
 import com.github.caspervg.dbpfmcp.core.CohortModel
+import com.github.caspervg.dbpfmcp.core.DecodeQfsRequest
 import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
 import com.github.caspervg.dbpfmcp.core.DecodedPropertyModel
 import com.github.caspervg.dbpfmcp.core.DescribePropertyRequest
@@ -41,6 +42,7 @@ import com.github.caspervg.dbpfmcp.core.PackageSummary
 import com.github.caspervg.dbpfmcp.core.PackageError
 import com.github.caspervg.dbpfmcp.core.ParentChainItem
 import com.github.caspervg.dbpfmcp.core.PropertyDescription
+import com.github.caspervg.dbpfmcp.core.QfsDecodedModel
 import com.github.caspervg.dbpfmcp.core.ReadCohortRequest
 import com.github.caspervg.dbpfmcp.core.ReadCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarRequest
@@ -76,8 +78,26 @@ import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.TabBinaryModel
 import com.github.caspervg.dbpfmcp.core.Tgi
 import com.github.caspervg.dbpfmcp.core.TextEntryModel
-import com.github.caspervg.dbpfmcp.core.WrittenEntryModel
 import com.github.caspervg.dbpfmcp.core.WriteLuaEntryRequest
+import com.github.caspervg.dbpfmcp.core.WriteLuaEntryResult
+import com.github.caspervg.dbpfmcp.core.ExemplarPropertyInput
+import com.github.caspervg.dbpfmcp.core.ExemplarWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteExemplarsRequest
+import com.github.caspervg.dbpfmcp.core.WriteExemplarsResult
+import com.github.caspervg.dbpfmcp.core.LTextWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteLTextRequest
+import com.github.caspervg.dbpfmcp.core.WriteLTextResult
+import com.github.caspervg.dbpfmcp.core.FshElementInput
+import com.github.caspervg.dbpfmcp.core.FshWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteFshRequest
+import com.github.caspervg.dbpfmcp.core.WriteFshResult
+import com.github.caspervg.dbpfmcp.core.ReadIniRequest
+import com.github.caspervg.dbpfmcp.core.ReadIniResult
+import com.github.caspervg.dbpfmcp.core.WriteIniRequest
+import com.github.caspervg.dbpfmcp.core.WriteIniResult
+import com.github.caspervg.dbpfmcp.core.RawWriteEntry
+import com.github.caspervg.dbpfmcp.core.WriteRawEntriesRequest
+import com.github.caspervg.dbpfmcp.core.WriteRawEntriesResult
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
 import com.github.caspervg.dbpfmcp.semantics.canonicalPropertyType
@@ -87,6 +107,7 @@ import com.github.caspervg.dbpfmcp.semantics.kindForType
 import com.github.caspervg.dbpfmcp.semantics.maybeExemplarName
 import com.github.caspervg.dbpfmcp.semantics.propertyName
 import com.github.caspervg.dbpfmcp.semantics.typesAreCompatible
+import io.github.memo33.passera.unsigned.UByte
 import io.github.memo33.passera.unsigned.UInt
 import io.github.memo33.passera.unsigned.UShort
 import io.github.memo33.scdbpf.BufferedEntry
@@ -103,6 +124,14 @@ import io.github.memo33.scdbpf.S3d
 import io.github.memo33.scdbpf.Sc4Path
 import io.github.memo33.scdbpf.StreamedEntry
 import io.github.memo33.scdbpf.Tgi as ScTgi
+import io.github.memo33.scdbpf.`DbpfFile$` as ScDbpfFileObject
+import io.github.memo33.scdbpf.`Exemplar$` as ScExemplarObject
+import io.github.memo33.scdbpf.DbpfProperty.`ValueType$` as ScValueTypeObject
+import io.github.memo33.scdbpf.`DbpfProperty$ValueType$ValueType` as ScValueType
+import io.github.memo33.scdbpf.Fsh.`FshFormat$` as ScFshFormatObject
+import io.github.memo33.scdbpf.Fsh.`FshDirectoryId$` as ScFshDirIdObject
+import io.github.memo33.scdbpf.`Fsh$FshFormat$FshFmtVal` as ScFshFmtVal
+import io.github.memo33.scdbpf.`Fsh$FshDirectoryId$FshDirVal` as ScFshDirVal
 import io.github.memo33.scdbpf.compat.Input
 import io.github.memo33.scdbpf.compat.ExceptionHandler
 import io.github.memo33.scdbpf.compat.Image
@@ -113,8 +142,14 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import scala.Tuple2
+import scala.Option as ScalaOption
+import scala.collection.IterableOnce
 import scala.collection.immutable.Map
 import scala.jdk.javaapi.CollectionConverters
 import java.io.File
@@ -126,6 +161,8 @@ import java.nio.file.Path
 import java.util.Base64
 import javax.imageio.ImageIO
 import java.awt.image.BufferedImage
+
+private const val DBPF_DIRECTORY_TYPE = 0xE86B1EEFL
 
 class ScdbpfAdapter : DbpfService {
     override val backendName: String = "scdbpf"
@@ -443,7 +480,7 @@ class ScdbpfAdapter : DbpfService {
             tgi = request.tgi,
             text = text,
             length = text.length,
-            lineCount = text.lineSequence().count(),
+            lineCount = text.reader().buffered().use { it.lineSequence().count() },
         )
     }
 
@@ -459,49 +496,27 @@ class ScdbpfAdapter : DbpfService {
         )
     }
 
-    override fun writeLuaEntry(request: WriteLuaEntryRequest): WrittenEntryModel {
+    override fun writeLuaEntry(request: WriteLuaEntryRequest): WriteLuaEntryResult {
         if (request.tgi.type != SC4TypeIds.LUA) {
             throw InputError("write_lua_entry requires a LUA type TGI (${formatHex32(SC4TypeIds.LUA)})")
         }
-        val dbpf = readPackage(request.path)
-        val outputPath = (request.outputPath?.let(Path::of) ?: Path.of(request.path)).toAbsolutePath().normalize()
-        outputPath.parent?.let(Files::createDirectories)
         val payload = request.text.toByteArray(StandardCharsets.UTF_8)
-        val replacement = BufferedEntry.apply(
-            tgiToSc(request.tgi),
+        val entry = BufferedEntry.apply(
+            domainToScTgi(request.tgi),
             RawType.apply(payload),
-            request.compress,
-        ) as DbpfEntry
-        val entries = CollectionConverters.asJava(dbpf.entries()).map { it as StreamedEntry }
-        val replaced = entries.any { tgiToDomain(it.tgi()) == request.tgi }
-        val updatedEntries = buildList<DbpfEntry> {
-            entries.forEach { entry ->
-                if (tgiToDomain(entry.tgi()) != request.tgi) {
-                    add(entry)
-                }
-            }
-            add(replacement)
-        }
-
-        try {
-            DbpfFile.write(
-                CollectionConverters.asScala(updatedEntries),
-                outputPath.toFile(),
-                scala.Option.empty(),
-                scala.Option.empty(),
-                handler,
-            )
-        } catch (exception: Exception) {
-            throw PackageError("Failed to write LUA entry to ${outputPath.toAbsolutePath()}", exception)
-        }
-        return WrittenEntryModel(
-            packagePath = outputPath.toString(),
+            request.compressed,
+        )
+        val (outputFile, entryCount) = writeDbpfPackage(
+            outputPath = request.outputPath,
+            overwrite = request.overwrite,
+            merge = request.merge,
+            newEntries = listOf(entry),
+        )
+        return WriteLuaEntryResult(
+            outputPath = outputFile.absolutePath,
             tgi = request.tgi,
-            kind = KnownEntryKind.LUA,
-            format = "lua",
-            payloadBytes = payload.size,
-            packageBytesWritten = Files.size(outputPath),
-            replaced = replaced,
+            entryCount = entryCount,
+            bytesWritten = outputFile.length(),
         )
     }
 
@@ -801,6 +816,43 @@ class ScdbpfAdapter : DbpfService {
         decodePropertyValue(request.id, request.values)
             ?: throw InputError("Unknown property ID: ${request.id.toULong().toString(16).uppercase()}")
 
+    override fun decodeQfs(request: DecodeQfsRequest): QfsDecodedModel {
+        val maxBytes = request.maxBytes
+        if (maxBytes != null && maxBytes <= 0) {
+            throw InputError("maxBytes must be > 0")
+        }
+        val input = try {
+            Base64.getDecoder().decode(request.payloadBase64)
+        } catch (_: IllegalArgumentException) {
+            throw InputError("payloadBase64 is not valid base64")
+        }
+        val offset = when (request.hasDbpfSizePrefix) {
+            true -> 4
+            false -> 0
+            null -> when {
+                QfsDecoder.isQfsCompressed(input, 0) -> 0
+                input.size >= 6 && QfsDecoder.isQfsCompressed(input, 4) -> 4
+                else -> 0
+            }
+        }
+        if (offset == 4 && input.size < 6) {
+            throw DecodeError("QFS payload is too short for a DBPF compressed-size prefix")
+        }
+        val decoded = QfsDecoder.decode(input, offset)
+            ?: throw DecodeError("Input is not a valid QFS stream")
+        val slice = if (maxBytes != null && decoded.bytes.size > maxBytes) decoded.bytes.copyOf(maxBytes) else decoded.bytes
+        return QfsDecodedModel(
+            compressedSize = input.size,
+            decodedSize = decoded.bytes.size,
+            declaredDecodedSize = decoded.declaredSize,
+            hasDbpfSizePrefix = offset == 4,
+            extendedHeader = decoded.extendedHeader,
+            payloadBase64 = Base64.getEncoder().encodeToString(slice),
+            payloadHexPreview = slice.joinToString("") { byte -> "%02X".format(byte) },
+            utf8Preview = utf8Preview(slice),
+        )
+    }
+
     override fun readKeyCfg(request: ReadKeyCfgRequest): KeyCfgModel {
         val maxBytes = request.maxBytes
         if (maxBytes != null && maxBytes <= 0) {
@@ -862,9 +914,6 @@ class ScdbpfAdapter : DbpfService {
         }
         val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
         val slice = if (maxBytes != null && bytes.size > maxBytes) bytes.copyOf(maxBytes) else bytes
-        val utf8Preview = slice.toString(StandardCharsets.UTF_8)
-            .takeIf { text -> text.isNotEmpty() && text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
-
         return RawEntryModel(
             tgi = request.tgi,
             kind = kindForType(request.tgi.type),
@@ -872,9 +921,499 @@ class ScdbpfAdapter : DbpfService {
             size = bytes.size,
             payloadBase64 = Base64.getEncoder().encodeToString(slice),
             payloadHexPreview = slice.joinToString("") { byte -> "%02X".format(byte) },
-            utf8Preview = utf8Preview,
+            utf8Preview = utf8Preview(slice),
         )
     }
+
+    override fun writeExemplars(request: WriteExemplarsRequest): WriteExemplarsResult {
+        if (request.entries.isEmpty()) {
+            throw InputError("entries must not be empty")
+        }
+        val seenEntryTgis = mutableSetOf<Tgi>()
+        request.entries.forEach { entry ->
+            if (!seenEntryTgis.add(entry.tgi)) {
+                throw InputError("Duplicate TGI ${formatTgi(entry.tgi)} in entries")
+            }
+        }
+        val warnings = mutableListOf<String>()
+        val newEntries = request.entries.map { entry ->
+            buildBufferedExemplarEntry(entry, request.compressed, request.validateAgainstRegistry, warnings)
+        }
+        val (outputFile, entryCount) = writeDbpfPackage(
+            outputPath = request.outputPath,
+            overwrite = request.overwrite,
+            merge = request.merge,
+            newEntries = newEntries,
+        )
+        return WriteExemplarsResult(
+            outputPath = outputFile.absolutePath,
+            entryCount = entryCount,
+            bytesWritten = outputFile.length(),
+            warnings = warnings,
+        )
+    }
+
+    override fun writeLText(request: WriteLTextRequest): WriteLTextResult {
+        if (request.entries.isEmpty()) {
+            throw InputError("entries must not be empty")
+        }
+        val seenEntryTgis = mutableSetOf<Tgi>()
+        request.entries.forEach { entry ->
+            if (!seenEntryTgis.add(entry.tgi)) {
+                throw InputError("Duplicate TGI ${formatTgi(entry.tgi)} in entries")
+            }
+        }
+        val newEntries = request.entries.map { entry ->
+            BufferedEntry.apply(domainToScTgi(entry.tgi), LText.apply(entry.text), request.compressed)
+        }
+        val (outputFile, entryCount) = writeDbpfPackage(
+            outputPath = request.outputPath,
+            overwrite = request.overwrite,
+            merge = request.merge,
+            newEntries = newEntries,
+        )
+        return WriteLTextResult(
+            outputPath = outputFile.absolutePath,
+            entryCount = entryCount,
+            bytesWritten = outputFile.length(),
+        )
+    }
+
+    override fun writeFsh(request: WriteFshRequest): WriteFshResult {
+        if (request.entries.isEmpty()) {
+            throw InputError("entries must not be empty")
+        }
+        val seenEntryTgis = mutableSetOf<Tgi>()
+        request.entries.forEach { entry ->
+            if (!seenEntryTgis.add(entry.tgi)) {
+                throw InputError("Duplicate TGI ${formatTgi(entry.tgi)} in entries")
+            }
+        }
+        val warnings = mutableListOf<String>()
+        val newEntries = request.entries.map { entry -> buildBufferedFshEntry(entry, request.compressed, warnings) }
+        val (outputFile, entryCount) = writeDbpfPackage(
+            outputPath = request.outputPath,
+            overwrite = request.overwrite,
+            merge = request.merge,
+            newEntries = newEntries,
+        )
+        return WriteFshResult(
+            outputPath = outputFile.absolutePath,
+            entryCount = entryCount,
+            bytesWritten = outputFile.length(),
+            warnings = warnings,
+        )
+    }
+
+    private fun writeDbpfPackage(
+        outputPath: String,
+        overwrite: Boolean,
+        merge: Boolean,
+        newEntries: List<BufferedEntry<out DbpfType>>,
+    ): Pair<File, Int> {
+        val outputFile = Path.of(outputPath).toAbsolutePath().normalize().toFile()
+        if (!merge && outputFile.exists() && !overwrite) {
+            throw InputError(
+                "Output file already exists: ${outputFile.absolutePath}. " +
+                    "Set overwrite=true to replace it entirely, or merge=true to patch/append entries into it.",
+            )
+        }
+        outputFile.parentFile?.let { it.mkdirs() }
+
+        val newTgis = newEntries.map { tgiToDomain(it.tgi()) }.toSet()
+        val entriesToWrite: List<io.github.memo33.scdbpf.DbpfEntry> = if (merge && outputFile.exists()) {
+            val existing = readPackage(outputFile.absolutePath)
+            val kept = CollectionConverters.asJava(existing.entries())
+                .map { it as StreamedEntry }
+                .filter { entry ->
+                    val tgi = tgiToDomain(entry.tgi())
+                    tgi.type != DBPF_DIRECTORY_TYPE && tgi !in newTgis
+                }
+            (kept as List<io.github.memo33.scdbpf.DbpfEntry>) + (newEntries as List<io.github.memo33.scdbpf.DbpfEntry>)
+        } else {
+            newEntries
+        }
+
+        try {
+            ScDbpfFileObject.`MODULE$`.write(
+                CollectionConverters.asScala(entriesToWrite),
+                outputFile,
+                ScalaOption.empty<UInt>(),
+                ScalaOption.empty<UInt>(),
+                handler,
+            )
+        } catch (exception: Exception) {
+            throw PackageError(
+                "Failed to write DBPF package to ${outputFile.absolutePath}: ${exception.message}",
+                exception,
+            )
+        }
+
+        return outputFile to entriesToWrite.size
+    }
+
+    private fun buildBufferedFshEntry(
+        entry: FshWriteEntry,
+        compressed: Boolean,
+        warnings: MutableList<String>,
+    ): BufferedEntry<Fsh> {
+        if (entry.elements.isEmpty()) {
+            throw InputError("FSH entry ${formatTgi(entry.tgi)} must declare at least one element")
+        }
+        val dirId = buildFshDirId(entry.dirId, entry.tgi)
+        val elements = entry.elements.map { buildFshElement(entry.tgi, it, warnings) }
+        val fsh = Fsh.apply(CollectionConverters.asScala(elements).toIndexedSeq(), dirId)
+        return BufferedEntry.apply(domainToScTgi(entry.tgi), fsh, compressed)
+    }
+
+    private fun buildFshElement(
+        tgi: Tgi,
+        elementInput: FshElementInput,
+        warnings: MutableList<String>,
+    ): Fsh.FshElement {
+        if (elementInput.imagesPngBase64.isEmpty()) {
+            throw InputError(
+                "FSH element on entry ${formatTgi(tgi)} must declare at least one PNG image (mip level 0 = full resolution)",
+            )
+        }
+        val formatName = elementInput.format.trim()
+        val fmt = buildFshFmtVal(formatName, tgi)
+        val isDxt = formatName == "Dxt1" || formatName == "Dxt3" || formatName == "Dxt5"
+        val decoded = elementInput.imagesPngBase64.mapIndexed { index, base64 ->
+            val bytes = try {
+                Base64.getDecoder().decode(base64)
+            } catch (exception: IllegalArgumentException) {
+                throw InputError("FSH element image at mip $index on entry ${formatTgi(tgi)} is not valid base64")
+            }
+            ImageIO.read(ByteArrayInputStream(bytes))
+                ?: throw InputError("FSH element image at mip $index on entry ${formatTgi(tgi)} could not be decoded as PNG")
+        }
+        val baseWidth = decoded[0].width
+        val baseHeight = decoded[0].height
+        decoded.forEachIndexed { index, image ->
+            val expectedWidth = maxOf(1, baseWidth shr index)
+            val expectedHeight = maxOf(1, baseHeight shr index)
+            if (image.width != expectedWidth || image.height != expectedHeight) {
+                throw InputError(
+                    "FSH element image at mip $index on entry ${formatTgi(tgi)} is ${image.width}x${image.height}, " +
+                        "expected ${expectedWidth}x${expectedHeight} for a mip chain halving down from " +
+                        "${baseWidth}x${baseHeight} at mip 0",
+                )
+            }
+            if (isDxt && (image.width % 4 != 0 || image.height % 4 != 0)) {
+                throw InputError(
+                    "FSH element image at mip $index on entry ${formatTgi(tgi)} is ${image.width}x${image.height}, " +
+                        "but $formatName requires both dimensions to be multiples of 4",
+                )
+            }
+        }
+        if (decoded.size == 1) {
+            warnings += "FSH element on entry ${formatTgi(tgi)}: only 1 mip level (full resolution) provided; " +
+                "the game will generate no additional mip levels for this element."
+        }
+        val images = decoded.map(::toScalaRgbaImage)
+        val labelOption: ScalaOption<String> = elementInput.label?.let { ScalaOption.apply(it) } ?: ScalaOption.empty()
+        return Fsh.FshElement(CollectionConverters.asScala(images), fmt, labelOption)
+    }
+
+    private fun toScalaRgbaImage(bufferedImage: BufferedImage): Image<RGBA> {
+        val w = bufferedImage.width
+        val h = bufferedImage.height
+        return object : Image<RGBA> {
+            override fun width(): Int = w
+            override fun height(): Int = h
+            override fun apply(x: Int, y: Int): RGBA {
+                val argb = bufferedImage.getRGB(x, y)
+                val a = (argb ushr 24) and 0xFF
+                val r = (argb ushr 16) and 0xFF
+                val g = (argb ushr 8) and 0xFF
+                val b = argb and 0xFF
+                return RGBA((a shl 24) or (b shl 16) or (g shl 8) or r)
+            }
+        }
+    }
+
+    private fun buildFshFmtVal(name: String, tgi: Tgi): ScFshFmtVal = when (name) {
+        "Dxt1" -> ScFshFormatObject.`MODULE$`.Dxt1()
+        "Dxt3" -> ScFshFormatObject.`MODULE$`.Dxt3()
+        "A8R8G8B8" -> ScFshFormatObject.`MODULE$`.A8R8G8B8()
+        "A0R8G8B8" -> ScFshFormatObject.`MODULE$`.A0R8G8B8()
+        "A1R5G5B5" -> ScFshFormatObject.`MODULE$`.A1R5G5B5()
+        "A0R5G6B5" -> ScFshFormatObject.`MODULE$`.A0R5G6B5()
+        "A4R4G4B4" -> ScFshFormatObject.`MODULE$`.A4R4G4B4()
+        else -> throw InputError(
+            "Unsupported FSH format '$name' on entry ${formatTgi(tgi)}. Supported: Dxt1, Dxt3, A8R8G8B8, " +
+                "A0R8G8B8, A1R5G5B5, A0R5G6B5, A4R4G4B4. (Dxt5 encoding is not supported by the bundled scdbpf " +
+                "version; decode of Dxt5 entries is unaffected.)",
+        )
+    }
+
+    private fun buildFshDirId(name: String, tgi: Tgi): ScFshDirVal = when (name.trim().uppercase()) {
+        "G354" -> ScFshDirIdObject.`MODULE$`.G354()
+        "G264" -> ScFshDirIdObject.`MODULE$`.G264()
+        "G266" -> ScFshDirIdObject.`MODULE$`.G266()
+        "G290" -> ScFshDirIdObject.`MODULE$`.G290()
+        "G315" -> ScFshDirIdObject.`MODULE$`.G315()
+        "GIMX" -> ScFshDirIdObject.`MODULE$`.GIMX()
+        "G344" -> ScFshDirIdObject.`MODULE$`.G344()
+        "G231" -> ScFshDirIdObject.`MODULE$`.G231()
+        "G341" -> ScFshDirIdObject.`MODULE$`.G341()
+        "G349" -> ScFshDirIdObject.`MODULE$`.G349()
+        "G352" -> ScFshDirIdObject.`MODULE$`.G352()
+        "G357" -> ScFshDirIdObject.`MODULE$`.G357()
+        else -> throw InputError(
+            "Unsupported FSH directory id '$name' on entry ${formatTgi(tgi)}. Supported: G354, G264, G266, G290, " +
+                "G315, GIMX, G344, G231, G341, G349, G352, G357.",
+        )
+    }
+
+    override fun readIni(request: ReadIniRequest): ReadIniResult {
+        val dbpf = readPackage(request.path)
+        val entry = findEntry(dbpf, request.tgi)
+        val rawEntry = try {
+            entry.toRawEntry(handler) as RawEntry
+        } catch (exception: Exception) {
+            throw DecodeError("Failed to read Network INI resource ${formatTgi(request.tgi)}", exception)
+        }
+        val storedBytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        val textBytes = decodeTextEntryPayload(storedBytes, request.tgi)
+        return ReadIniResult(
+            path = File(request.path).absolutePath,
+            tgi = request.tgi,
+            compressed = rawEntry.compressed(),
+            size = textBytes.size,
+            text = String(textBytes, StandardCharsets.UTF_8),
+        )
+    }
+
+    override fun writeIni(request: WriteIniRequest): WriteIniResult {
+        if (request.text.isEmpty()) {
+            throw InputError("text must not be empty")
+        }
+        val entry = BufferedEntry.apply(
+            domainToScTgi(request.tgi),
+            RawType.apply(request.text.toByteArray(StandardCharsets.UTF_8)),
+            request.compressed,
+        )
+        val (outputFile, entryCount) = writeDbpfPackage(
+            outputPath = request.outputPath,
+            overwrite = request.overwrite,
+            merge = request.merge,
+            newEntries = listOf(entry),
+        )
+        return WriteIniResult(
+            outputPath = outputFile.absolutePath,
+            tgi = request.tgi,
+            entryCount = entryCount,
+            bytesWritten = outputFile.length(),
+        )
+    }
+
+    override fun writeRawEntries(request: WriteRawEntriesRequest): WriteRawEntriesResult {
+        if (request.entries.isEmpty()) {
+            throw InputError("entries must not be empty")
+        }
+        val seenEntryTgis = mutableSetOf<Tgi>()
+        request.entries.forEach { entry ->
+            if (!seenEntryTgis.add(entry.tgi)) {
+                throw InputError("Duplicate TGI ${formatTgi(entry.tgi)} in entries")
+            }
+        }
+        val newEntries = request.entries.map { entry -> buildBufferedRawEntry(entry, request.compressed) }
+        val (outputFile, entryCount) = writeDbpfPackage(
+            outputPath = request.outputPath,
+            overwrite = request.overwrite,
+            merge = request.merge,
+            newEntries = newEntries,
+        )
+        return WriteRawEntriesResult(
+            outputPath = outputFile.absolutePath,
+            entryCount = entryCount,
+            bytesWritten = outputFile.length(),
+        )
+    }
+
+    private fun buildBufferedRawEntry(entry: RawWriteEntry, compressed: Boolean): BufferedEntry<DbpfType> {
+        val bytes = try {
+            Base64.getDecoder().decode(entry.payloadBase64)
+        } catch (exception: IllegalArgumentException) {
+            throw InputError("Entry ${formatTgi(entry.tgi)} payloadBase64 is not valid base64")
+        }
+        return BufferedEntry.apply(domainToScTgi(entry.tgi), RawType.apply(bytes), compressed)
+    }
+
+    private fun buildBufferedExemplarEntry(
+        entry: ExemplarWriteEntry,
+        compressed: Boolean,
+        validate: Boolean,
+        warnings: MutableList<String>,
+    ): BufferedEntry<Exemplar> {
+        if (entry.properties.isEmpty()) {
+            throw InputError("Exemplar ${formatTgi(entry.tgi)} must declare at least one property")
+        }
+        if (validate) {
+            if (entry.isCohort && entry.tgi.type != SC4TypeIds.COHORT) {
+                warnings += "Exemplar ${formatTgi(entry.tgi)}: isCohort=true but TGI type is not the standard " +
+                    "Cohort type (${formatHex32(SC4TypeIds.COHORT)}). This is allowed but unusual."
+            }
+            if (!entry.isCohort && entry.tgi.type != SC4TypeIds.EXEMPLAR) {
+                warnings += "Exemplar ${formatTgi(entry.tgi)}: isCohort=false but TGI type is not the standard " +
+                    "Exemplar type (${formatHex32(SC4TypeIds.EXEMPLAR)}). This is allowed but unusual."
+            }
+        }
+        val seenIds = mutableSetOf<Long>()
+        val propTuples = entry.properties.map { property ->
+            if (!seenIds.add(property.id)) {
+                throw InputError("Duplicate property id ${formatHex32(property.id)} for exemplar ${formatTgi(entry.tgi)}")
+            }
+            Tuple2(UInt(property.id.toInt()), buildPropertyList(entry.tgi, property, validate, warnings))
+        }
+        @Suppress("UNCHECKED_CAST")
+        val scalaProps = CollectionConverters.asScala(propTuples) as
+            IterableOnce<Tuple2<UInt, DbpfProperty.PropertyList<*>>>
+        val parentTgi = entry.parentCohort?.let(::domainToScTgi) ?: ScTgi.Blank()
+        val exemplar = ScExemplarObject.`MODULE$`.apply(parentTgi, entry.isCohort, scalaProps)
+        return BufferedEntry.apply(domainToScTgi(entry.tgi), exemplar, compressed)
+    }
+
+    private fun domainToScTgi(tgi: Tgi): ScTgi =
+        ScTgi.apply(tgi.type.toInt(), tgi.group.toInt(), tgi.instance.toInt())
+
+    private fun buildPropertyList(
+        tgi: Tgi,
+        property: ExemplarPropertyInput,
+        validate: Boolean,
+        warnings: MutableList<String>,
+    ): DbpfProperty.PropertyList<*> {
+        if (property.values.isEmpty()) {
+            throw InputError("Property ${formatHex32(property.id)} on exemplar ${formatTgi(tgi)} must declare at least one value")
+        }
+        val declaredType = property.type?.trim()?.takeIf { it.isNotEmpty() }
+        val registryType = canonicalPropertyType(describeProperty(property.id)?.type)
+        val resolvedType = declaredType ?: registryType
+            ?: throw InputError(
+                "Property ${formatHex32(property.id)} on exemplar ${formatTgi(tgi)} has no type and is not in the " +
+                    "bundled property registry; specify type explicitly (Uint8, Uint16, Uint32, Sint32, Sint64, " +
+                    "Float32, Bool, String, or Tgi).",
+            )
+        if (validate) {
+            if (declaredType == null) {
+                warnings += "Property ${formatHex32(property.id)} on exemplar ${formatTgi(tgi)}: type inferred as " +
+                    "$resolvedType from the bundled property registry."
+            } else if (registryType == null) {
+                warnings += "Property ${formatHex32(property.id)} on exemplar ${formatTgi(tgi)}: not found in the " +
+                    "bundled property registry; writing as declared type $declaredType without cross-check."
+            } else if (canonicalPropertyType(declaredType) != registryType) {
+                warnings += "Property ${formatHex32(property.id)} on exemplar ${formatTgi(tgi)}: declared type " +
+                    "$declaredType does not match registry type $registryType. Using declared type as specified."
+            }
+        }
+        return when (resolvedType) {
+            "Uint8" -> wrapProperty(
+                property.values.map { UByte(requireRangedLong(it, property.id, tgi, 0, 0xFF, "Uint8").toInt().toByte()) },
+                ScValueTypeObject.`MODULE$`.Uint8(),
+            )
+            "Uint16" -> wrapProperty(
+                property.values.map { UShort(requireRangedLong(it, property.id, tgi, 0, 0xFFFF, "Uint16").toInt().toShort()) },
+                ScValueTypeObject.`MODULE$`.Uint16(),
+            )
+            "Uint32" -> wrapProperty(
+                property.values.map { UInt(requireRangedLong(it, property.id, tgi, 0, 0xFFFFFFFFL, "Uint32").toInt()) },
+                ScValueTypeObject.`MODULE$`.Uint32(),
+            )
+            "Sint32" -> wrapProperty(
+                property.values.map {
+                    requireRangedLong(it, property.id, tgi, Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong(), "Sint32").toInt()
+                },
+                ScValueTypeObject.`MODULE$`.Sint32(),
+            )
+            "Sint64" -> wrapProperty(
+                property.values.map { requireLong(it, property.id, tgi) },
+                ScValueTypeObject.`MODULE$`.Sint64(),
+            )
+            "Float32" -> wrapProperty(
+                property.values.map { requireDouble(it, property.id, tgi).toFloat() },
+                ScValueTypeObject.`MODULE$`.Float32(),
+            )
+            "Bool" -> wrapProperty(
+                property.values.map { requireBoolean(it, property.id, tgi) },
+                ScValueTypeObject.`MODULE$`.Bool(),
+            )
+            "String" -> {
+                if (property.values.size != 1) {
+                    throw InputError(
+                        "String property ${formatHex32(property.id)} on exemplar ${formatTgi(tgi)} must have exactly one value",
+                    )
+                }
+                DbpfProperty.Single(requireString(property.values[0], property.id, tgi), ScValueTypeObject.`MODULE$`.String())
+            }
+            "Tgi" -> {
+                val words = property.values.flatMap { requireTgiTriplet(it, property.id, tgi) }
+                DbpfProperty.Multi(CollectionConverters.asScala(words).toIndexedSeq(), ScValueTypeObject.`MODULE$`.Uint32())
+            }
+            else -> throw InputError(
+                "Unsupported property type '${property.type}' for property ${formatHex32(property.id)} on exemplar " +
+                    "${formatTgi(tgi)}. Supported types: Uint8, Uint16, Uint32, Sint32, Sint64, Float32, Bool, String, Tgi.",
+            )
+        }
+    }
+
+    private fun <A> wrapProperty(values: List<A>, valueType: ScValueType<A>): DbpfProperty.PropertyList<*> =
+        if (values.size == 1) {
+            DbpfProperty.Single(values[0], valueType)
+        } else {
+            DbpfProperty.Multi(CollectionConverters.asScala(values).toIndexedSeq(), valueType)
+        }
+
+    private fun requireTgiTriplet(value: JsonElement, id: Long, tgi: Tgi): List<UInt> {
+        val array = value as? JsonArray
+            ?: throw InputError(
+                "Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} has type Tgi and expects each value to " +
+                    "be a [type, group, instance] array, got $value",
+            )
+        if (array.size != 3) {
+            throw InputError(
+                "Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} has type Tgi and expects exactly 3 " +
+                    "elements (type, group, instance) per value, got ${array.size}",
+            )
+        }
+        return array.map { UInt(requireLong(it, id, tgi).toInt()) }
+    }
+
+    private fun requireRangedLong(value: JsonElement, id: Long, tgi: Tgi, min: Long, max: Long, typeName: String): Long {
+        val parsed = requireLong(value, id, tgi)
+        if (parsed < min || parsed > max) {
+            throw InputError(
+                "Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)}: value $parsed is out of range for " +
+                    "$typeName ($min..$max)",
+            )
+        }
+        return parsed
+    }
+
+    private fun requireLong(value: JsonElement, id: Long, tgi: Tgi): Long {
+        val primitive = value as? JsonPrimitive
+            ?: throw InputError("Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} expects an integer value, got $value")
+        primitive.longOrNull?.let { return it }
+        val content = primitive.contentOrNull?.trim()
+        if (content != null && content.startsWith("0x", ignoreCase = true)) {
+            return content.drop(2).toULongOrNull(16)?.toLong()
+                ?: throw InputError("Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} has an invalid hex integer: $content")
+        }
+        throw InputError("Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} expects an integer value, got $value")
+    }
+
+    private fun requireDouble(value: JsonElement, id: Long, tgi: Tgi): Double =
+        (value as? JsonPrimitive)?.doubleOrNull
+            ?: throw InputError("Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} expects a numeric value, got $value")
+
+    private fun requireBoolean(value: JsonElement, id: Long, tgi: Tgi): Boolean =
+        (value as? JsonPrimitive)?.let { it.booleanOrNull ?: it.longOrNull?.let { n -> n != 0L } }
+            ?: throw InputError("Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} expects a boolean value, got $value")
+
+    private fun requireString(value: JsonElement, id: Long, tgi: Tgi): String =
+        (value as? JsonPrimitive)?.contentOrNull
+            ?: throw InputError("Property ${formatHex32(id)} on exemplar ${formatTgi(tgi)} expects a string value, got $value")
 
     private fun validatePaging(request: ListEntriesRequest) {
         val limit = request.limit
@@ -1151,16 +1690,14 @@ class ScdbpfAdapter : DbpfService {
         instance = unsignedInt(tgi.iid()),
     )
 
-    private fun tgiToSc(tgi: Tgi): ScTgi = ScTgi.apply(
-        tgi.type.toInt(),
-        tgi.group.toInt(),
-        tgi.instance.toInt(),
-    )
-
     private fun formatTgi(tgi: Tgi): String =
         "${formatHex32(tgi.type)}-${formatHex32(tgi.group)}-${formatHex32(tgi.instance)}"
 
     private fun unsignedInt(value: Any): Long = (value as Number).toLong() and 0xFFFF_FFFFL
+
+    private fun utf8Preview(bytes: ByteArray): String? =
+        bytes.toString(StandardCharsets.UTF_8)
+            .takeIf { text -> text.isNotEmpty() && text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
 
     private fun isBlankTgi(tgi: ScTgi): Boolean =
         unsignedInt(tgi.tid()) == 0L && unsignedInt(tgi.gid()) == 0L && unsignedInt(tgi.iid()) == 0L
@@ -1205,7 +1742,7 @@ class ScdbpfAdapter : DbpfService {
 
     private fun rawText(entry: StreamedEntry, tgi: Tgi, kind: String): String {
         val rawEntry = entry.toRawEntry(handler) as RawEntry
-        val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        val bytes = decodeTextEntryPayload(Input.slurpBytes(rawEntry.input(), handler) as ByteArray, tgi)
         val decoder = StandardCharsets.UTF_8.newDecoder()
             .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
             .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
@@ -1340,4 +1877,14 @@ class ScdbpfAdapter : DbpfService {
         ImageIO.write(bufferedImage, "png", output)
         return output.toByteArray()
     }
+}
+
+internal fun decodeTextEntryPayload(storedBytes: ByteArray, tgi: Tgi): ByteArray {
+    val qfsOffset = when {
+        QfsDecoder.isQfsCompressed(storedBytes, 0) -> 0
+        storedBytes.size >= 6 && QfsDecoder.isQfsCompressed(storedBytes, 4) -> 4
+        else -> return storedBytes
+    }
+    return QfsDecoder.decode(storedBytes, qfsOffset)?.bytes
+        ?: throw DecodeError("Text entry $tgi contains an invalid QFS stream")
 }

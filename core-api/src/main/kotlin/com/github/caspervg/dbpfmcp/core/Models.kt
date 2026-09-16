@@ -380,11 +380,20 @@ data class ExportLuaTextRequest(
 
 @Serializable
 data class WriteLuaEntryRequest(
-    val path: String,
+    val outputPath: String,
     val tgi: Tgi,
     val text: String,
-    val outputPath: String? = null,
-    val compress: Boolean = true,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteLuaEntryResult(
+    val outputPath: String,
+    val tgi: Tgi,
+    val entryCount: Int,
+    val bytesWritten: Long,
 )
 
 @Serializable
@@ -450,10 +459,158 @@ data class DecodePropertyValueRequest(
 )
 
 @Serializable
+data class DecodeQfsRequest(
+    val payloadBase64: String,
+    val maxBytes: Int? = null,
+    val hasDbpfSizePrefix: Boolean? = null,
+)
+
+@Serializable
 data class ReadRawEntryRequest(
     val path: String,
     val tgi: Tgi,
     val maxBytes: Int? = null,
+)
+
+@Serializable
+data class ExemplarPropertyInput(
+    val id: Long,
+    val type: String? = null,
+    val values: List<JsonElement>,
+)
+
+@Serializable
+data class ExemplarWriteEntry(
+    val tgi: Tgi,
+    val isCohort: Boolean = false,
+    val parentCohort: Tgi? = null,
+    val properties: List<ExemplarPropertyInput>,
+)
+
+@Serializable
+data class WriteExemplarsRequest(
+    val outputPath: String,
+    val entries: List<ExemplarWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+    val validateAgainstRegistry: Boolean = true,
+)
+
+@Serializable
+data class WriteExemplarsResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
+    val warnings: List<String> = emptyList(),
+)
+
+@Serializable
+data class LTextWriteEntry(
+    val tgi: Tgi,
+    val text: String,
+)
+
+@Serializable
+data class WriteLTextRequest(
+    val outputPath: String,
+    val entries: List<LTextWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteLTextResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
+)
+
+@Serializable
+data class FshElementInput(
+    val format: String,
+    val label: String? = null,
+    val imagesPngBase64: List<String>,
+)
+
+@Serializable
+data class FshWriteEntry(
+    val tgi: Tgi,
+    val dirId: String = "G264",
+    val elements: List<FshElementInput>,
+)
+
+@Serializable
+data class WriteFshRequest(
+    val outputPath: String,
+    val entries: List<FshWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteFshResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
+    val warnings: List<String> = emptyList(),
+)
+
+@Serializable
+data class ReadIniRequest(
+    val path: String,
+    val tgi: Tgi,
+)
+
+@Serializable
+data class ReadIniResult(
+    val path: String,
+    val tgi: Tgi,
+    val compressed: Boolean,
+    val size: Int,
+    val text: String,
+)
+
+@Serializable
+data class WriteIniRequest(
+    val outputPath: String,
+    val tgi: Tgi,
+    val text: String,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteIniResult(
+    val outputPath: String,
+    val tgi: Tgi,
+    val entryCount: Int,
+    val bytesWritten: Long,
+)
+
+@Serializable
+data class RawWriteEntry(
+    val tgi: Tgi,
+    val payloadBase64: String,
+)
+
+@Serializable
+data class WriteRawEntriesRequest(
+    val outputPath: String,
+    val entries: List<RawWriteEntry>,
+    val compressed: Boolean = true,
+    val overwrite: Boolean = false,
+    val merge: Boolean = false,
+)
+
+@Serializable
+data class WriteRawEntriesResult(
+    val outputPath: String,
+    val entryCount: Int,
+    val bytesWritten: Long,
 )
 
 @Serializable
@@ -483,6 +640,18 @@ data class RawEntryModel(
 )
 
 @Serializable
+data class QfsDecodedModel(
+    val compressedSize: Int,
+    val decodedSize: Int,
+    val declaredDecodedSize: Int,
+    val hasDbpfSizePrefix: Boolean,
+    val extendedHeader: Boolean,
+    val payloadBase64: String,
+    val payloadHexPreview: String,
+    val utf8Preview: String? = null,
+)
+
+@Serializable
 data class TextEntryModel(
     val tgi: Tgi,
     val kind: KnownEntryKind,
@@ -498,17 +667,6 @@ data class ExportedFileModel(
     val format: String,
     val outputPath: String,
     val bytesWritten: Long,
-)
-
-@Serializable
-data class WrittenEntryModel(
-    val packagePath: String,
-    val tgi: Tgi,
-    val kind: KnownEntryKind,
-    val format: String,
-    val payloadBytes: Int,
-    val packageBytesWritten: Long,
-    val replaced: Boolean,
 )
 
 @Serializable
@@ -757,7 +915,7 @@ interface DbpfService {
 
     fun exportLuaText(request: ExportLuaTextRequest): ExportedFileModel
 
-    fun writeLuaEntry(request: WriteLuaEntryRequest): WrittenEntryModel
+    fun writeLuaEntry(request: WriteLuaEntryRequest): WriteLuaEntryResult
 
     fun readSC4Paths(request: ReadSC4PathsRequest): SC4PathsModel
 
@@ -779,9 +937,23 @@ interface DbpfService {
 
     fun decodePropertyValue(request: DecodePropertyValueRequest): DecodedPropertyModel
 
+    fun decodeQfs(request: DecodeQfsRequest): QfsDecodedModel
+
     fun readKeyCfg(request: ReadKeyCfgRequest): KeyCfgModel
 
     fun readTabBinary(request: ReadTabBinaryRequest): TabBinaryModel
 
     fun readRawEntry(request: ReadRawEntryRequest): RawEntryModel
+
+    fun writeExemplars(request: WriteExemplarsRequest): WriteExemplarsResult
+
+    fun writeLText(request: WriteLTextRequest): WriteLTextResult
+
+    fun writeFsh(request: WriteFshRequest): WriteFshResult
+
+    fun readIni(request: ReadIniRequest): ReadIniResult
+
+    fun writeIni(request: WriteIniRequest): WriteIniResult
+
+    fun writeRawEntries(request: WriteRawEntriesRequest): WriteRawEntriesResult
 }
