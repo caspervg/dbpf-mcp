@@ -5,6 +5,7 @@ import com.github.caspervg.dbpfmcp.core.DecodePropertyValueRequest
 import com.github.caspervg.dbpfmcp.core.ExportCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportFshPngRequest
+import com.github.caspervg.dbpfmcp.core.ExportLuaTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsJsonRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsTextRequest
 import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
@@ -20,9 +21,11 @@ import com.github.caspervg.dbpfmcp.core.ReadExemplarRequest
 import com.github.caspervg.dbpfmcp.core.ReadExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.ReadLTextRequest
+import com.github.caspervg.dbpfmcp.core.ReadLuaRequest
 import com.github.caspervg.dbpfmcp.core.ReadRawEntryRequest
 import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
 import com.github.caspervg.dbpfmcp.core.Tgi
+import com.github.caspervg.dbpfmcp.core.WriteLuaEntryRequest
 import io.github.memo33.passera.unsigned.UInt
 import io.github.memo33.scdbpf.BufferedEntry
 import io.github.memo33.scdbpf.`DbpfFile$` as ScDbpfFileObject
@@ -61,6 +64,7 @@ class ScdbpfAdapterIntegrationTest {
         val exemplarTgi = ScTgi.apply(0x6534284A, 0x00000000, 0x12345678)
         val cohortTgi = ScTgi.apply(0x05342861, 0x00000000, 0x12345679)
         val ltextTgi = ScTgi.apply(0x2026960B, 0x00000000, 0x1234567A)
+        val luaTgi = ScTgi.apply(0xCA63E2A3.toInt(), 0x4A5E8EF6, 0x1234567B)
         val props = CollectionConverters.asScala(
             listOf<Tuple2<UInt, DbpfProperty.PropertyList<*>>>(
                 Tuple2(
@@ -91,6 +95,7 @@ class ScdbpfAdapterIntegrationTest {
             BufferedEntry.apply(exemplarTgi, exemplar, true),
             BufferedEntry.apply(cohortTgi, cohort, true),
             BufferedEntry.apply(ltextTgi, LText.apply("Hello LTEXT"), true),
+            RawEntry(luaTgi, "function main()\n    return 42\nend\n".toByteArray(StandardCharsets.UTF_8)),
         )
         ScDbpfFileObject.`MODULE$`.write(
             CollectionConverters.asScala(entries),
@@ -102,8 +107,8 @@ class ScdbpfAdapterIntegrationTest {
 
         val adapter = ScdbpfAdapter()
         val listResult = adapter.listEntries(ListEntriesRequest(path = packagePath.toString()))
-        assertEquals(3, listResult.entryCount)
-        assertEquals(3, listResult.entries.size)
+        assertEquals(4, listResult.entryCount)
+        assertEquals(4, listResult.entries.size)
         assertTrue(listResult.entries.first().compressed != null)
 
         val filteredListResult = adapter.listEntries(
@@ -168,6 +173,15 @@ class ScdbpfAdapterIntegrationTest {
         assertEquals("Hello LTEXT", ltextResult.text)
         assertEquals(11, ltextResult.length)
 
+        val luaResult = adapter.readLua(
+            ReadLuaRequest(
+                path = packagePath.toString(),
+                tgi = Tgi(0xCA63E2A3L, 0x4A5E8EF6L, 0x1234567BL),
+            )
+        )
+        assertTrue(luaResult.text.contains("return 42"))
+        assertEquals(3, luaResult.lineCount)
+
         val exemplarExplanation = adapter.explainEntry(
             ExplainEntryRequest(
                 path = packagePath.toString(),
@@ -188,14 +202,24 @@ class ScdbpfAdapterIntegrationTest {
         assertEquals(com.github.caspervg.dbpfmcp.core.KnownEntryKind.LTEXT, ltextExplanation.kind)
         assertTrue(ltextExplanation.importantFields.any { it.name == "preview" && it.value == "Hello LTEXT" })
 
+        val luaExplanation = adapter.explainEntry(
+            ExplainEntryRequest(
+                path = packagePath.toString(),
+                tgi = Tgi(0xCA63E2A3L, 0x4A5E8EF6L, 0x1234567BL),
+            )
+        )
+        assertEquals(KnownEntryKind.LUA, luaExplanation.kind)
+        assertTrue(luaExplanation.suggestedNextTools.contains("write_lua_entry"))
+
         val propertyDescription = adapter.describeProperty(
             com.github.caspervg.dbpfmcp.core.DescribePropertyRequest(0x20)
         )
         assertEquals("Exemplar Name", propertyDescription.name)
 
         val packageSummary = adapter.summarizePackage(SummarizePackageRequest(path = packagePath.toString()))
-        assertEquals(3, packageSummary.entryCount)
+        assertEquals(4, packageSummary.entryCount)
         assertEquals(true, packageSummary.countsByKind.any { it.kind == com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR && it.count == 1 })
+        assertEquals(true, packageSummary.countsByKind.any { it.kind == KnownEntryKind.LUA && it.count == 1 })
 
         val packageInspection = adapter.inspectPackage(
             InspectPackageRequest(
@@ -204,8 +228,9 @@ class ScdbpfAdapterIntegrationTest {
                 maxObjectHints = 10,
             )
         )
-        assertEquals(3, packageInspection.entryCount)
+        assertEquals(4, packageInspection.entryCount)
         assertTrue(packageInspection.notableEntries.any { it.kind == com.github.caspervg.dbpfmcp.core.KnownEntryKind.EXEMPLAR })
+        assertTrue(packageInspection.notableEntries.any { it.kind == KnownEntryKind.LUA })
         assertTrue(packageInspection.sc4ObjectHints.any { it.name == "Spike Exemplar" && it.exemplarType == "Network" })
         assertTrue(packageInspection.recommendedNextTools.contains("read_exemplar"))
 
@@ -261,6 +286,35 @@ class ScdbpfAdapterIntegrationTest {
         )
         assertTrue(cohortExport.bytesWritten > 0)
         assertTrue(java.nio.file.Files.readString(cohortTextPath).startsWith("CQZT1###"))
+
+        val luaTextPath = tempDir.resolve("exports/script.lua")
+        val luaExport = adapter.exportLuaText(
+            ExportLuaTextRequest(
+                path = packagePath.toString(),
+                tgi = Tgi(0xCA63E2A3L, 0x4A5E8EF6L, 0x1234567BL),
+                outputPath = luaTextPath.toString(),
+            )
+        )
+        assertTrue(luaExport.bytesWritten > 0)
+        assertTrue(java.nio.file.Files.readString(luaTextPath).contains("return 42"))
+
+        val writtenPackagePath = tempDir.resolve("fixture-written.dat")
+        val writeResult = adapter.writeLuaEntry(
+            WriteLuaEntryRequest(
+                path = packagePath.toString(),
+                tgi = Tgi(0xCA63E2A3L, 0x4A5E8EF6L, 0x1234567BL),
+                text = "function main()\n    return 99\nend\n",
+                outputPath = writtenPackagePath.toString(),
+            )
+        )
+        assertTrue(writeResult.replaced)
+        val updatedLua = adapter.readLua(
+            ReadLuaRequest(
+                path = writtenPackagePath.toString(),
+                tgi = Tgi(0xCA63E2A3L, 0x4A5E8EF6L, 0x1234567BL),
+            )
+        )
+        assertTrue(updatedLua.text.contains("return 99"))
     }
 
     @Test

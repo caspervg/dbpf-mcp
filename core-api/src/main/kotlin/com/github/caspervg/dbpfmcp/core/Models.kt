@@ -15,6 +15,7 @@ enum class KnownEntryKind {
     EXEMPLAR,
     COHORT,
     LTEXT,
+    LUA,
     PNG,
     KEYCFG,
     TAB,
@@ -82,6 +83,14 @@ data class LTextModel(
     val tgi: Tgi,
     val text: String,
     val length: Int,
+)
+
+@Serializable
+data class LuaModel(
+    val tgi: Tgi,
+    val text: String,
+    val length: Int,
+    val lineCount: Int,
 )
 
 @Serializable
@@ -357,6 +366,28 @@ data class ReadLTextRequest(
 )
 
 @Serializable
+data class ReadLuaRequest(
+    val path: String,
+    val tgi: Tgi,
+)
+
+@Serializable
+data class ExportLuaTextRequest(
+    val path: String,
+    val tgi: Tgi,
+    val outputPath: String,
+)
+
+@Serializable
+data class WriteLuaEntryRequest(
+    val path: String,
+    val tgi: Tgi,
+    val text: String,
+    val outputPath: String? = null,
+    val compress: Boolean = true,
+)
+
+@Serializable
 data class ReadSC4PathsRequest(
     val path: String,
     val tgi: Tgi,
@@ -467,6 +498,17 @@ data class ExportedFileModel(
     val format: String,
     val outputPath: String,
     val bytesWritten: Long,
+)
+
+@Serializable
+data class WrittenEntryModel(
+    val packagePath: String,
+    val tgi: Tgi,
+    val kind: KnownEntryKind,
+    val format: String,
+    val payloadBytes: Int,
+    val packageBytesWritten: Long,
+    val replaced: Boolean,
 )
 
 @Serializable
@@ -710,6 +752,12 @@ interface DbpfService {
     fun exportCohortText(request: ExportCohortTextRequest): ExportedFileModel
 
     fun readLText(request: ReadLTextRequest): LTextModel
+
+    fun readLua(request: ReadLuaRequest): LuaModel
+
+    fun exportLuaText(request: ExportLuaTextRequest): ExportedFileModel
+
+    fun writeLuaEntry(request: WriteLuaEntryRequest): WrittenEntryModel
 
     fun readSC4Paths(request: ReadSC4PathsRequest): SC4PathsModel
 

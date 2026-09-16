@@ -48,6 +48,7 @@ internal class ScdbpfEntryExplainer {
         return when (kind) {
             KnownEntryKind.EXEMPLAR, KnownEntryKind.COHORT -> explainExemplarLike(request.path, entry, kind)
             KnownEntryKind.LTEXT -> explainLText(request.path, entry, tgi)
+            KnownEntryKind.LUA -> explainLua(request.path, entry, tgi)
             KnownEntryKind.SC4PATHS -> explainSc4Paths(request.path, entry, tgi)
             KnownEntryKind.S3D -> explainS3d(request.path, entry, tgi)
             KnownEntryKind.FSH -> explainFsh(request.path, entry, tgi)
@@ -124,6 +125,32 @@ internal class ScdbpfEntryExplainer {
             relationships = emptyList(),
             warnings = emptyList(),
             suggestedNextTools = listOf("read_ltext"),
+        )
+    }
+
+    private fun explainLua(path: String, entry: StreamedEntry, tgi: Tgi): ExplainEntryResult {
+        val raw = entry.toRawEntry(handler) as RawEntry
+        val bytes = io.github.memo33.scdbpf.compat.Input.slurpBytes(raw.input(), handler) as ByteArray
+        val preview = bytes.copyOf(minOf(bytes.size, 240))
+            .toString(StandardCharsets.UTF_8)
+            .takeIf { text -> text.all { it == '\n' || it == '\r' || it == '\t' || !it.isISOControl() } }
+        return ExplainEntryResult(
+            packagePath = File(path).absolutePath,
+            tgi = tgi,
+            kind = KnownEntryKind.LUA,
+            summary = "LUA script resource containing ${bytes.size} bytes.",
+            importantFields = buildList {
+                add(ExplanationField("size", bytes.size.toString()))
+                add(ExplanationField("compressed", raw.compressed().toString()))
+                preview?.let { add(ExplanationField("preview", it)) }
+            },
+            relationships = emptyList(),
+            warnings = if (preview == null) {
+                listOf("LUA payload does not look like UTF-8 source text; it may be a binary Lua chunk.")
+            } else {
+                emptyList()
+            },
+            suggestedNextTools = listOf("read_lua", "write_lua_entry", "read_raw_entry"),
         )
     }
 

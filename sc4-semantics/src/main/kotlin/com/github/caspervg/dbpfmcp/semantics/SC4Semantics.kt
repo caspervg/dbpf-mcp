@@ -20,6 +20,7 @@ object SC4TypeIds {
     const val EXEMPLAR: Long = 0x6534284AL
     const val COHORT: Long = 0x05342861L
     const val LTEXT: Long = 0x2026960BL
+    const val LUA: Long = 0xCA63E2A3L
     const val PNG: Long = 0x856DDBACL
     const val KEYCFG: Long = 0xA2E3D533L
     const val TAB: Long = 0xAA5C3144L
@@ -34,6 +35,7 @@ private val knownTypeKinds = mapOf(
     SC4TypeIds.EXEMPLAR to KnownEntryKind.EXEMPLAR,
     SC4TypeIds.COHORT to KnownEntryKind.COHORT,
     SC4TypeIds.LTEXT to KnownEntryKind.LTEXT,
+    SC4TypeIds.LUA to KnownEntryKind.LUA,
     SC4TypeIds.PNG to KnownEntryKind.PNG,
     SC4TypeIds.KEYCFG to KnownEntryKind.KEYCFG,
     SC4TypeIds.TAB to KnownEntryKind.TAB,

@@ -71,4 +71,9 @@ class SC4SemanticsTest {
     fun `png type is recognized`() {
         assertEquals(KnownEntryKind.PNG, kindForType(SC4TypeIds.PNG))
     }
+
+    @Test
+    fun `lua type is recognized`() {
+        assertEquals(KnownEntryKind.LUA, kindForType(SC4TypeIds.LUA))
+    }
 }

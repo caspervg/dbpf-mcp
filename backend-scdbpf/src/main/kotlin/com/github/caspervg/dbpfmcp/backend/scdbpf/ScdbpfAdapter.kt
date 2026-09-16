@@ -13,6 +13,7 @@ import com.github.caspervg.dbpfmcp.core.ExemplarProperty
 import com.github.caspervg.dbpfmcp.core.ExportCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportFshPngRequest
+import com.github.caspervg.dbpfmcp.core.ExportLuaTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsJsonRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsTextRequest
 import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
@@ -31,6 +32,7 @@ import com.github.caspervg.dbpfmcp.core.InputError
 import com.github.caspervg.dbpfmcp.core.KeyCfgModel
 import com.github.caspervg.dbpfmcp.core.KnownEntryKind
 import com.github.caspervg.dbpfmcp.core.LTextModel
+import com.github.caspervg.dbpfmcp.core.LuaModel
 import com.github.caspervg.dbpfmcp.core.ListEntriesRequest
 import com.github.caspervg.dbpfmcp.core.ListEntriesResult
 import com.github.caspervg.dbpfmcp.core.NotableEntry
@@ -47,6 +49,7 @@ import com.github.caspervg.dbpfmcp.core.ReadFshRequest
 import com.github.caspervg.dbpfmcp.core.ReadImageEntryRequest
 import com.github.caspervg.dbpfmcp.core.ReadKeyCfgRequest
 import com.github.caspervg.dbpfmcp.core.ReadLTextRequest
+import com.github.caspervg.dbpfmcp.core.ReadLuaRequest
 import com.github.caspervg.dbpfmcp.core.ReadS3dRequest
 import com.github.caspervg.dbpfmcp.core.ReadSC4PathsRequest
 import com.github.caspervg.dbpfmcp.core.ReadTabBinaryRequest
@@ -73,6 +76,8 @@ import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.TabBinaryModel
 import com.github.caspervg.dbpfmcp.core.Tgi
 import com.github.caspervg.dbpfmcp.core.TextEntryModel
+import com.github.caspervg.dbpfmcp.core.WrittenEntryModel
+import com.github.caspervg.dbpfmcp.core.WriteLuaEntryRequest
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.SC4TypeIds
 import com.github.caspervg.dbpfmcp.semantics.canonicalPropertyType
@@ -85,6 +90,7 @@ import com.github.caspervg.dbpfmcp.semantics.typesAreCompatible
 import io.github.memo33.passera.unsigned.UInt
 import io.github.memo33.passera.unsigned.UShort
 import io.github.memo33.scdbpf.BufferedEntry
+import io.github.memo33.scdbpf.DbpfEntry
 import io.github.memo33.scdbpf.DbpfType
 import io.github.memo33.scdbpf.DbpfFile
 import io.github.memo33.scdbpf.DbpfProperty
@@ -92,6 +98,7 @@ import io.github.memo33.scdbpf.Exemplar
 import io.github.memo33.scdbpf.Fsh
 import io.github.memo33.scdbpf.LText
 import io.github.memo33.scdbpf.RawEntry
+import io.github.memo33.scdbpf.RawType
 import io.github.memo33.scdbpf.S3d
 import io.github.memo33.scdbpf.Sc4Path
 import io.github.memo33.scdbpf.StreamedEntry
@@ -414,6 +421,87 @@ class ScdbpfAdapter : DbpfService {
             tgi = request.tgi,
             text = text,
             length = text.length,
+        )
+    }
+
+    override fun readLua(request: ReadLuaRequest): LuaModel {
+        val dbpf = readPackage(request.path)
+        val entry = findEntry(dbpf, request.tgi)
+
+        if (tgiToDomain(entry.tgi()).type != SC4TypeIds.LUA) {
+            throw InputError("Requested entry is not a LUA entry")
+        }
+
+        val text = try {
+            rawText(entry, request.tgi, "LUA")
+        } catch (exception: DecodeError) {
+            throw exception
+        } catch (exception: Exception) {
+            throw DecodeError("Failed to decode LUA ${request.tgi}", exception)
+        }
+        return LuaModel(
+            tgi = request.tgi,
+            text = text,
+            length = text.length,
+            lineCount = text.lineSequence().count(),
+        )
+    }
+
+    override fun exportLuaText(request: ExportLuaTextRequest): ExportedFileModel {
+        val model = readLua(ReadLuaRequest(path = request.path, tgi = request.tgi))
+        val path = writeBytes(request.outputPath, model.text.toByteArray(StandardCharsets.UTF_8))
+        return ExportedFileModel(
+            tgi = request.tgi,
+            kind = KnownEntryKind.LUA,
+            format = "lua",
+            outputPath = path.toAbsolutePath().toString(),
+            bytesWritten = Files.size(path),
+        )
+    }
+
+    override fun writeLuaEntry(request: WriteLuaEntryRequest): WrittenEntryModel {
+        if (request.tgi.type != SC4TypeIds.LUA) {
+            throw InputError("write_lua_entry requires a LUA type TGI (${formatHex32(SC4TypeIds.LUA)})")
+        }
+        val dbpf = readPackage(request.path)
+        val outputPath = (request.outputPath?.let(Path::of) ?: Path.of(request.path)).toAbsolutePath().normalize()
+        outputPath.parent?.let(Files::createDirectories)
+        val payload = request.text.toByteArray(StandardCharsets.UTF_8)
+        val replacement = BufferedEntry.apply(
+            tgiToSc(request.tgi),
+            RawType.apply(payload),
+            request.compress,
+        ) as DbpfEntry
+        val entries = CollectionConverters.asJava(dbpf.entries()).map { it as StreamedEntry }
+        val replaced = entries.any { tgiToDomain(it.tgi()) == request.tgi }
+        val updatedEntries = buildList<DbpfEntry> {
+            entries.forEach { entry ->
+                if (tgiToDomain(entry.tgi()) != request.tgi) {
+                    add(entry)
+                }
+            }
+            add(replacement)
+        }
+
+        try {
+            DbpfFile.write(
+                CollectionConverters.asScala(updatedEntries),
+                outputPath.toFile(),
+                scala.Option.empty(),
+                scala.Option.empty(),
+                handler,
+            )
+        } catch (exception: Exception) {
+            throw PackageError("Failed to write LUA entry to ${outputPath.toAbsolutePath()}", exception)
+        }
+        return WrittenEntryModel(
+            packagePath = outputPath.toString(),
+            tgi = request.tgi,
+            kind = KnownEntryKind.LUA,
+            format = "lua",
+            payloadBytes = payload.size,
+            packageBytesWritten = Files.size(outputPath),
+            replaced = replaced,
         )
     }
 
@@ -828,18 +916,20 @@ class ScdbpfAdapter : DbpfService {
         KnownEntryKind.EXEMPLAR -> 0
         KnownEntryKind.COHORT -> 1
         KnownEntryKind.LTEXT -> 2
-        KnownEntryKind.PNG, KnownEntryKind.FSH -> 3
-        KnownEntryKind.S3D -> 4
-        KnownEntryKind.SC4PATHS -> 5
-        KnownEntryKind.KEYCFG, KnownEntryKind.TAB -> 6
-        KnownEntryKind.RUL, KnownEntryKind.EFFDIR -> 7
-        KnownEntryKind.UNKNOWN -> 8
+        KnownEntryKind.LUA -> 3
+        KnownEntryKind.PNG, KnownEntryKind.FSH -> 4
+        KnownEntryKind.S3D -> 5
+        KnownEntryKind.SC4PATHS -> 6
+        KnownEntryKind.KEYCFG, KnownEntryKind.TAB -> 7
+        KnownEntryKind.RUL, KnownEntryKind.EFFDIR -> 8
+        KnownEntryKind.UNKNOWN -> 9
     }
 
     private fun notableReason(entry: EntrySummary): String = when (entry.kind) {
         KnownEntryKind.EXEMPLAR -> "SC4 exemplar; use read_exemplar for properties and semantic hints."
         KnownEntryKind.COHORT -> "SC4 cohort; use read_cohort for inherited/shared properties."
         KnownEntryKind.LTEXT -> "Localized text resource; use read_ltext for contents."
+        KnownEntryKind.LUA -> "Lua script resource; use read_lua for source text."
         KnownEntryKind.PNG, KnownEntryKind.FSH -> "Image or texture resource; use read_image_entry/read_fsh for preview metadata."
         KnownEntryKind.S3D -> "3D model resource; use read_s3d for model metadata."
         KnownEntryKind.SC4PATHS -> "Network path resource; use read_sc4paths for path records."
@@ -1061,6 +1151,12 @@ class ScdbpfAdapter : DbpfService {
         instance = unsignedInt(tgi.iid()),
     )
 
+    private fun tgiToSc(tgi: Tgi): ScTgi = ScTgi.apply(
+        tgi.type.toInt(),
+        tgi.group.toInt(),
+        tgi.instance.toInt(),
+    )
+
     private fun formatTgi(tgi: Tgi): String =
         "${formatHex32(tgi.type)}-${formatHex32(tgi.group)}-${formatHex32(tgi.instance)}"
 
@@ -1105,6 +1201,19 @@ class ScdbpfAdapter : DbpfService {
     private fun decodeFshEntry(entry: StreamedEntry): BufferedEntry<Fsh> {
         val buffered = entry.toBufferedEntry(handler) as BufferedEntry<DbpfType>
         return buffered.convert(handler, Fsh.contentConverter()) as BufferedEntry<Fsh>
+    }
+
+    private fun rawText(entry: StreamedEntry, tgi: Tgi, kind: String): String {
+        val rawEntry = entry.toRawEntry(handler) as RawEntry
+        val bytes = Input.slurpBytes(rawEntry.input(), handler) as ByteArray
+        val decoder = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+        return try {
+            decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+        } catch (exception: java.nio.charset.CharacterCodingException) {
+            throw DecodeError("$kind entry $tgi is not valid UTF-8 text", exception)
+        }
     }
 
     private fun readNativePngEntry(entry: StreamedEntry, tgi: Tgi): ImageEntryModel {

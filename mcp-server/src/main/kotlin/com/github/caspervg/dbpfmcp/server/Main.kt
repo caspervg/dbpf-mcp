@@ -8,6 +8,7 @@ import com.github.caspervg.dbpfmcp.core.ExportedFileModel
 import com.github.caspervg.dbpfmcp.core.ExportCohortTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportExemplarTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportFshPngRequest
+import com.github.caspervg.dbpfmcp.core.ExportLuaTextRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsJsonRequest
 import com.github.caspervg.dbpfmcp.core.ExportSC4PathsTextRequest
 import com.github.caspervg.dbpfmcp.core.ExplainEntryRequest
@@ -27,6 +28,7 @@ import com.github.caspervg.dbpfmcp.core.ReadFshRequest
 import com.github.caspervg.dbpfmcp.core.ReadImageEntryRequest
 import com.github.caspervg.dbpfmcp.core.ReadKeyCfgRequest
 import com.github.caspervg.dbpfmcp.core.ReadLTextRequest
+import com.github.caspervg.dbpfmcp.core.ReadLuaRequest
 import com.github.caspervg.dbpfmcp.core.ReadRawEntryRequest
 import com.github.caspervg.dbpfmcp.core.ReadS3dRequest
 import com.github.caspervg.dbpfmcp.core.ReadSC4PathsRequest
@@ -34,6 +36,7 @@ import com.github.caspervg.dbpfmcp.core.ReadTabBinaryRequest
 import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
 import com.github.caspervg.dbpfmcp.core.SummarizePackageRequest
 import com.github.caspervg.dbpfmcp.core.Tgi
+import com.github.caspervg.dbpfmcp.core.WriteLuaEntryRequest
 import com.github.caspervg.dbpfmcp.semantics.formatHex32
 import com.github.caspervg.dbpfmcp.semantics.parseHexId
 import com.github.caspervg.dbpfmcp.semantics.parseTgi
@@ -407,6 +410,45 @@ fun main(): Unit = runBlocking {
                     put("text", result.text)
                     put("length", result.length)
                 }
+            }
+        }
+        addTool(
+            name = "read_lua",
+            description = "Decode a single text LUA entry into stable source JSON",
+            inputSchema = readEntryByTgiInputSchema(),
+            title = "Read LUA",
+            toolAnnotations = readOnlyToolAnnotations("Read LUA"),
+        ) { request ->
+            handleTool(json) {
+                val result = adapter.readLua(parseReadLuaRequest(request))
+                buildJsonObject {
+                    put("tgi", tgiJson(result.tgi))
+                    put("text", result.text)
+                    put("length", result.length)
+                    put("lineCount", result.lineCount)
+                }
+            }
+        }
+        addTool(
+            name = "export_lua_text",
+            description = "Decode one text LUA entry and write the Lua source to disk",
+            inputSchema = exportEntryByTgiInputSchema(),
+            title = "Export LUA Text",
+            toolAnnotations = writeToolAnnotations("Export LUA Text"),
+        ) { request ->
+            handleTool(json) {
+                exportedFileJson(adapter.exportLuaText(parseExportLuaTextRequest(request)))
+            }
+        }
+        addTool(
+            name = "write_lua_entry",
+            description = "Add or replace a text LUA entry in a DBPF package. Omitting outputPath rewrites the source package in-place.",
+            inputSchema = writeLuaEntryInputSchema(),
+            title = "Write LUA Entry",
+            toolAnnotations = writeToolAnnotations("Write LUA Entry"),
+        ) { request ->
+            handleTool(json) {
+                writtenEntryJson(adapter.writeLuaEntry(parseWriteLuaEntryRequest(request)))
             }
         }
         addTool(
@@ -1002,6 +1044,31 @@ private fun parseReadLTextRequest(request: CallToolRequest): ReadLTextRequest {
     return ReadLTextRequest(path = path, tgi = tgi)
 }
 
+private fun parseReadLuaRequest(request: CallToolRequest): ReadLuaRequest {
+    val (path, tgi) = parseReadEntryRequest(request)
+    return ReadLuaRequest(path = path, tgi = tgi)
+}
+
+private fun parseExportLuaTextRequest(request: CallToolRequest): ExportLuaTextRequest {
+    val (path, tgi) = parseReadEntryRequest(request)
+    return ExportLuaTextRequest(
+        path = path,
+        tgi = tgi,
+        outputPath = request.arguments.requiredString("outputPath"),
+    )
+}
+
+private fun parseWriteLuaEntryRequest(request: CallToolRequest): WriteLuaEntryRequest {
+    val (path, tgi) = parseReadEntryRequest(request)
+    return WriteLuaEntryRequest(
+        path = path,
+        tgi = tgi,
+        text = request.arguments.requiredString("text"),
+        outputPath = request.arguments.optionalString("outputPath"),
+        compress = request.arguments.optionalBoolean("compress") ?: true,
+    )
+}
+
 private fun parseReadSC4PathsRequest(request: CallToolRequest): ReadSC4PathsRequest {
     val (path, tgi) = parseReadEntryRequest(request)
     return ReadSC4PathsRequest(path = path, tgi = tgi)
@@ -1284,6 +1351,16 @@ private fun exportedFileJson(file: ExportedFileModel): JsonObject = buildJsonObj
     put("bytesWritten", file.bytesWritten)
 }
 
+private fun writtenEntryJson(file: com.github.caspervg.dbpfmcp.core.WrittenEntryModel): JsonObject = buildJsonObject {
+    put("packagePath", file.packagePath)
+    put("tgi", tgiJson(file.tgi))
+    put("kind", file.kind.name)
+    put("format", file.format)
+    put("payloadBytes", file.payloadBytes)
+    put("packageBytesWritten", file.packageBytesWritten)
+    put("replaced", file.replaced)
+}
+
 private fun parseKnownEntryKind(value: String): KnownEntryKind = try {
     KnownEntryKind.valueOf(value.trim().uppercase())
 } catch (_: IllegalArgumentException) {
@@ -1519,6 +1596,44 @@ private fun readRawEntryInputSchema(): Tool.Input = Tool.Input(
         }
     },
     required = listOf("path"),
+)
+
+private fun writeLuaEntryInputSchema(): Tool.Input = Tool.Input(
+    properties = buildJsonObject {
+        putJsonObject("path") {
+            put("type", "string")
+            put("description", "Filesystem path to one DBPF package file, not a Plugins folder.")
+        }
+        putJsonObject("tgi") {
+            put("type", "string")
+            put("description", "Full LUA TGI as hexadecimal type-group-instance. Type must be CA63E2A3.")
+        }
+        putJsonObject("type") {
+            put("type", "string")
+            put("description", "TGI type as hexadecimal. Must be CA63E2A3 for LUA.")
+        }
+        putJsonObject("group") {
+            put("type", "string")
+            put("description", "TGI group as hexadecimal.")
+        }
+        putJsonObject("instance") {
+            put("type", "string")
+            put("description", "TGI instance as hexadecimal.")
+        }
+        putJsonObject("text") {
+            put("type", "string")
+            put("description", "Lua source text to store as the DBPF entry payload.")
+        }
+        putJsonObject("outputPath") {
+            put("type", "string")
+            put("description", "Optional output DBPF path. If omitted, the source package is rewritten in-place.")
+        }
+        putJsonObject("compress") {
+            put("type", "boolean")
+            put("description", "Whether to store the new LUA entry compressed when beneficial. Default: true.")
+        }
+    },
+    required = listOf("path", "text"),
 )
 
 private fun readKeyCfgInputSchema(): Tool.Input = Tool.Input(
