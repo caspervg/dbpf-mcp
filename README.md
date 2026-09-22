@@ -1,6 +1,6 @@
 # dbpf-mcp
 
-`dbpf-mcp` is a Kotlin/JVM Model Context Protocol server for reading and writing SimCity 4 DBPF packages. It exposes tools for listing package entries, indexing Plugins folders, decoding common SC4 resource types, exporting decoded resources to text or image files, and creating/patching new DBPF packages (exemplars, cohorts, LTEXT, Lua, FSH textures, Network INI resources, and raw entries).
+`dbpf-mcp` is a Kotlin/JVM Model Context Protocol server for reading and writing SimCity 4 DBPF packages. It exposes tools for listing package entries, indexing Plugins folders, decoding common SC4 resource types, exporting decoded resources to text or image files, and creating/patching new DBPF packages (exemplars, cohorts, LTEXT, Lua, FSH textures, Network INI resources, and raw entries). It can also scale, move and rotate S3D model geometry.
 
 The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 
@@ -16,7 +16,9 @@ The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 - Decode SC4PATHS entries as JSON or canonical path text, either in-memory or exported to disk.
 - Decode LTEXT, text Lua, S3D metadata, FSH metadata, image entries, and raw entry previews.
 - Export selected FSH bitmap images as PNG files.
-- Decode individual exemplar property values for quick property interpretation.
+- Decode individual exemplar property values for quick property interpretation, and describe properties from the bundled registry (`describe_property`).
+- Explain a single entry in concise SC4 terms (`explain_entry`).
+- Read any entry as raw bytes with previews (`read_raw_entry`), and decode standalone QFS/RefPack payloads from base64 (`decode_qfs`).
 - Read a Network INI resource (`read_ini`) from a DBPF package by TGI, including QFS-compressed entries such as `00000000-8A5971C5-8A5993B9`.
 
 ### Write
@@ -27,13 +29,29 @@ The server currently uses the `backend-scdbpf` adapter and runs over MCP stdio.
 - `write_fsh`: create a DBPF package with new FSH texture entries encoded from PNG images. Supports Dxt1, Dxt3, A8R8G8B8, A0R8G8B8, A1R5G5B5, A0R5G6B5, A4R4G4B4, multiple elements per entry, and caller-supplied mip chains. Dxt5 encoding is not supported by the bundled scdbpf version (decoding Dxt5 via `read_fsh`/`export_fsh_png` is unaffected).
 - `write_raw_entries`: write arbitrary bytes to any TGI with no format decoding, for entry kinds without a dedicated encoder (KEYCFG, TAB, RUL, EFFDIR, PNG, etc.).
 - `write_ini`: install exact Network INI text at a caller-specified TGI in a new or existing DBPF package. `merge: true` preserves unrelated package entries and replaces the matching TGI.
+- `transform_s3d`: rotate one S3D model about the vertical Y axis, then scale it about the origin, then translate it, and write the result as the only entry in a new package. The rotation pivot can be `"origin"` (default), `"center"` (XZ centre of the model's bounding box) or an explicit `{x, z}` point. The result reports the model's bounds before and after, plus warnings. UVs, materials, topology, animation and registration points are not changed. The output file must not exist yet; this tool never overwrites. **Rotation is only valid for True3D models:** pre-rendered (BAT/view-based) models have textures baked for each camera view and will look wrong when rotated.
 
-Package creation tools accept `outputPath`, `overwrite` (replace an existing file entirely), and `merge` (keep existing entries not addressed by the request and replace/append by TGI). They also accept `compressed` (QFS-compress new entries, default true) and reject duplicate TGIs within one request.
+Apart from `transform_s3d`, package creation tools accept `outputPath`, `overwrite` (replace an existing file entirely), and `merge` (keep existing entries not addressed by the request and replace/append by TGI). They also accept `compressed` (QFS-compress new entries, default true) and reject duplicate TGIs within one request.
 
 Experimental tools:
 
 - `read_keycfg`: heuristic decoder for KEYCFG/TAB-like text resources. It may return noisy fragments and may not reconstruct shortcut records.
 - `read_tab_binary`: structural binary probe for compiled TAB resources. It returns little-endian words and chunks, not a semantic TAB model.
+
+## Tool reference
+
+| Area | Tools |
+|---|---|
+| Packages & index | `list_entries`, `summarize_package`, `inspect_package`, `explain_entry`, `index_plugins`, `index_status`, `search_index` |
+| Exemplars & cohorts | `read_exemplar`, `read_cohort`, `read_exemplar_text`, `read_cohort_text`, `export_exemplar_text`, `export_cohort_text`, `write_exemplars` |
+| Properties | `describe_property`, `decode_property_value` |
+| Text & Lua | `read_ltext`, `write_ltext`, `read_lua`, `export_lua_text`, `write_lua_entry` |
+| SC4PATHS | `read_sc4paths`, `read_sc4paths_text`, `export_sc4paths_text`, `export_sc4paths_json` |
+| Models | `read_s3d`, `transform_s3d` |
+| Textures & images | `read_fsh`, `read_image_entry`, `export_fsh_png`, `write_fsh` |
+| Network INI | `read_ini`, `write_ini` |
+| Raw & low-level | `read_raw_entry`, `write_raw_entries`, `decode_qfs` |
+| Experimental | `read_keycfg`, `read_tab_binary` |
 
 ## Project structure
 
@@ -119,6 +137,7 @@ Typical workflow:
 5. Use export tools such as `export_exemplar_text`, `export_cohort_text`, `export_sc4paths_text`, `export_sc4paths_json`, `export_lua_text`, or `export_fsh_png` when you want files written to disk.
 6. Use write tools such as `write_exemplars`, `write_ltext`, `write_lua_entry`, `write_fsh`, or `write_raw_entries` to create or update a `.dat`.
 7. Use `read_ini` / `write_ini` for Network INI text stored directly in DBPF entries.
+8. Use `transform_s3d` to scale, move or rotate (True3D only) a model entry into a new package.
 
 TGI arguments can be supplied either as one string:
 
@@ -151,6 +170,7 @@ or as separate `type`, `group`, and `instance` hex values.
 - Folder-wide scanning happens only through `index_plugins`; other tools expect one DBPF package path.
 - Cross-package parent cohort resolution requires a current Plugins index and is limited to entries present in that index.
 - S3D support reports model metadata, mesh group summaries, materials, and animation metadata; it does not export full geometry, and there is no `write_s3d`.
+- `transform_s3d` transforms one S3D entry at a time: other zoom/rotation variants, textures and exemplars are not copied or updated, and registration points are not transformed.
 - `read_keycfg` and `read_tab_binary` are not finished.
 - `write_fsh` cannot encode Dxt5 (the bundled scdbpf version only supports Dxt5 decode) and does not generate mip levels automatically; callers must supply each mip image pre-downscaled.
 - `write_ltext` always encodes UTF-16 LTEXT; other LTEXT formats are not selectable in the bundled scdbpf version.
