@@ -69,6 +69,8 @@ import com.github.caspervg.dbpfmcp.core.S3dIndxGroupSummary
 import com.github.caspervg.dbpfmcp.core.S3dMatsGroupSummary
 import com.github.caspervg.dbpfmcp.core.S3dMaterialSummary
 import com.github.caspervg.dbpfmcp.core.S3dModel
+import com.github.caspervg.dbpfmcp.core.TransformS3dRequest
+import com.github.caspervg.dbpfmcp.core.TransformS3dResult
 import com.github.caspervg.dbpfmcp.core.S3dPrimGroupSummary
 import com.github.caspervg.dbpfmcp.core.S3dPrimSummary
 import com.github.caspervg.dbpfmcp.core.S3dPropSummary
@@ -594,6 +596,54 @@ class ScdbpfAdapter : DbpfService {
             format = "sc4paths-json",
             outputPath = outputPath.toAbsolutePath().toString(),
             bytesWritten = Files.size(outputPath),
+        )
+    }
+
+    override fun transformS3d(request: TransformS3dRequest): TransformS3dResult {
+        val outputTgi = request.outputTgi ?: request.tgi
+        listOf(request.tgi, outputTgi).forEach { tgi ->
+            if (tgi.type != SC4TypeIds.S3D || listOf(tgi.type, tgi.group, tgi.instance).any { it !in 0..0xFFFFFFFFL }) {
+                throw InputError("Source and output TGIs must be S3D keys with unsigned 32-bit components")
+            }
+        }
+        val output = Path.of(request.outputPath).toAbsolutePath().normalize()
+        if (Files.exists(output, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw InputError("transform_s3d requires a new output file; existing files are never replaced")
+        }
+        val source = decodeS3dEntry(findEntry(readPackage(request.path), request.tgi)).content()
+        val transformed = S3dTransformer.transform(source, request)
+        val before = S3dTransformer.bounds(source)
+        val after = S3dTransformer.bounds(transformed)
+        // Serialize away from the destination and source, then publish without replacement.
+        Files.createDirectories(output.parent)
+        val temporary = Files.createTempFile(output.parent, ".s3d-", ".dat")
+        try {
+            writeDbpfPackage(
+                temporary.toString(), overwrite = true, merge = false,
+                newEntries = listOf(BufferedEntry.apply(domainToScTgi(outputTgi), transformed, request.compressed)),
+            )
+            // Reopen the serialized entry before publishing the new package.
+            val roundTrip = decodeS3dEntry(findEntry(readPackage(temporary.toString()), outputTgi)).content()
+            if (S3dTransformer.bounds(roundTrip) != after) {
+                throw PackageError("S3D bounds changed during serialization")
+            }
+            Files.move(temporary, output)
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+        return TransformS3dResult(
+            outputPath = output.toString(), tgi = outputTgi,
+            vertexCount = CollectionConverters.asJava(transformed.vert()).sumOf { it.size() },
+            before = before, after = after, pivot = S3dTransformer.pivot(source, request.pivot), bytesWritten = Files.size(output),
+            warnings = buildList {
+                add("Vertex-only transform: UVs, materials, topology, animation and registration points are unchanged.")
+                if (request.rotationDegrees % 360f != 0f) {
+                    add("Rotation is only valid for True3D models. Pre-rendered (BAT/view-based) models have textures baked per camera view and will look wrong when rotated.")
+                }
+                add("Only the S3D entry is written; referenced textures, exemplars and other zoom/rotation models are not copied or updated.")
+                if (source.regp().nonEmpty()) add("Registration points were not transformed; review attachment alignment.")
+                if ((source.anim().numFrames().toInt() and 0xFFFF) > 1) add("All vertex groups were transformed; animation timing and displacement are unchanged.")
+            },
         )
     }
 

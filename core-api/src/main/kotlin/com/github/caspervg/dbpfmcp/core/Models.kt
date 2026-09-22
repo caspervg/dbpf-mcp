@@ -927,6 +927,8 @@ interface DbpfService {
 
     fun readS3d(request: ReadS3dRequest): S3dModel
 
+    fun transformS3d(request: TransformS3dRequest): TransformS3dResult
+
     fun readFsh(request: ReadFshRequest): FshModel
 
     fun readImageEntry(request: ReadImageEntryRequest): ImageEntryModel

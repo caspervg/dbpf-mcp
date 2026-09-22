@@ -34,6 +34,11 @@ import com.github.caspervg.dbpfmcp.core.ReadLTextRequest
 import com.github.caspervg.dbpfmcp.core.ReadLuaRequest
 import com.github.caspervg.dbpfmcp.core.ReadRawEntryRequest
 import com.github.caspervg.dbpfmcp.core.ReadS3dRequest
+import com.github.caspervg.dbpfmcp.core.S3dBounds
+import com.github.caspervg.dbpfmcp.core.S3dPivot
+import com.github.caspervg.dbpfmcp.core.S3dVector
+import com.github.caspervg.dbpfmcp.core.TransformS3dRequest
+import com.github.caspervg.dbpfmcp.core.TransformS3dResult
 import com.github.caspervg.dbpfmcp.core.ReadSC4PathsRequest
 import com.github.caspervg.dbpfmcp.core.ReadTabBinaryRequest
 import com.github.caspervg.dbpfmcp.core.SearchIndexRequest
@@ -84,6 +89,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -565,6 +571,17 @@ fun main(): Unit = runBlocking {
         ) { request ->
             handleTool(json) {
                 exportedFileJson(adapter.exportSC4PathsJson(parseExportSC4PathsJsonRequest(request)))
+            }
+        }
+        addTool(
+            name = "transform_s3d",
+            description = "Rotate about the vertical Y axis, then scale, then translate the vertices of one S3D entry, and write the result as a single entry in a new DBPF package. Rotation is only valid for True3D models: pre-rendered (BAT/view-based) models bake textures per camera view and will look wrong when rotated. Never overwrites existing files; UVs, materials, topology, animation and registration points are unchanged.",
+            inputSchema = transformS3dInputSchema(),
+            title = "Transform S3D",
+            toolAnnotations = writeToolAnnotations("Transform S3D"),
+        ) { request ->
+            handleTool(json) {
+                transformS3dResultJson(adapter.transformS3d(parseTransformS3dRequest(request)))
             }
         }
         addTool(
@@ -1198,6 +1215,122 @@ private fun parseExportSC4PathsJsonRequest(request: CallToolRequest): ExportSC4P
         path = path,
         tgi = tgi,
         outputPath = request.arguments.requiredString("outputPath"),
+    )
+}
+
+private fun parseTransformS3dRequest(request: CallToolRequest): TransformS3dRequest {
+    val (path, tgi) = parseReadEntryRequest(request)
+    val args = request.arguments
+    return TransformS3dRequest(
+        path = path,
+        tgi = tgi,
+        outputPath = args.requiredString("outputPath"),
+        outputTgi = args.optionalString("outputTgi")?.let(::parseTgi),
+        scale = args.optionalVector("scale", default = 1f),
+        translation = args.optionalVector("translation", default = 0f),
+        rotationDegrees = args["rotationDegrees"]?.let {
+            it.jsonPrimitive.floatOrNull ?: throw InputError("rotationDegrees must be a number")
+        } ?: 0f,
+        pivot = parseS3dPivot(args["pivot"]),
+        compressed = args.optionalBoolean("compressed") ?: true,
+    )
+}
+
+private fun parseS3dPivot(element: JsonElement?): S3dPivot = when {
+    element == null || element is JsonNull -> S3dPivot.Origin
+    element is JsonPrimitive -> when (element.contentOrNull) {
+        "origin" -> S3dPivot.Origin
+        "center" -> S3dPivot.Center
+        else -> throw InputError("pivot must be \"origin\", \"center\" or an {x, z} object")
+    }
+    element is JsonObject -> {
+        fun component(axis: String): Float =
+            element[axis]?.jsonPrimitive?.floatOrNull ?: throw InputError("pivot.$axis must be a number")
+        S3dPivot.Point(component("x"), component("z"))
+    }
+    else -> throw InputError("pivot must be \"origin\", \"center\" or an {x, z} object")
+}
+
+private fun JsonObject.optionalVector(name: String, default: Float): S3dVector {
+    val obj = this[name]?.jsonObject ?: return S3dVector(default, default, default)
+    fun component(axis: String): Float {
+        val element = obj[axis] ?: return default
+        return element.jsonPrimitive.floatOrNull ?: throw InputError("$name.$axis must be a number")
+    }
+    return S3dVector(component("x"), component("y"), component("z"))
+}
+
+private fun s3dVectorJson(vector: S3dVector): JsonObject = buildJsonObject {
+    put("x", vector.x)
+    put("y", vector.y)
+    put("z", vector.z)
+}
+
+private fun s3dBoundsJson(bounds: S3dBounds): JsonObject = buildJsonObject {
+    put("min", s3dVectorJson(bounds.min))
+    put("max", s3dVectorJson(bounds.max))
+}
+
+private fun transformS3dResultJson(result: TransformS3dResult): JsonObject = buildJsonObject {
+    put("outputPath", result.outputPath)
+    put("tgi", tgiJson(result.tgi))
+    put("vertexCount", result.vertexCount)
+    put("before", s3dBoundsJson(result.before))
+    put("after", s3dBoundsJson(result.after))
+    put("pivot", buildJsonObject { put("x", result.pivot.x); put("z", result.pivot.z) })
+    put("bytesWritten", result.bytesWritten)
+    putJsonArray("warnings") { result.warnings.forEach { add(JsonPrimitive(it)) } }
+}
+
+private fun transformS3dInputSchema(): Tool.Input {
+    val base = readEntryByTgiInputSchema()
+    fun vectorSchema(description: String) = buildJsonObject {
+        put("type", "object")
+        put("description", description)
+        putJsonObject("properties") {
+            listOf("x", "y", "z").forEach { axis -> putJsonObject(axis) { put("type", "number") } }
+        }
+    }
+    return Tool.Input(
+        properties = buildJsonObject {
+            base.properties.forEach { (key, value) -> put(key, value) }
+            putJsonObject("outputPath") {
+                put("type", "string")
+                put("description", "Path for the new DBPF package. Must not already exist.")
+            }
+            putJsonObject("outputTgi") {
+                put("type", "string")
+                put("description", "Optional S3D TGI for the written entry as hexadecimal type-group-instance. Defaults to the source TGI.")
+            }
+            putJsonObject("rotationDegrees") {
+                put("type", "number")
+                put("description", "Rotation about the vertical +Y axis in degrees (right-hand rule), applied first. Only valid for True3D models; pre-rendered view-based models will look wrong. Defaults to 0.")
+            }
+            putJsonObject("pivot") {
+                put("description", "Rotation pivot in source model coordinates: \"origin\" (default, the game's placement anchor), \"center\" (XZ centre of the source bounding box), or an {x, z} object.")
+                putJsonArray("oneOf") {
+                    add(buildJsonObject {
+                        put("type", "string")
+                        putJsonArray("enum") { add(JsonPrimitive("origin")); add(JsonPrimitive("center")) }
+                    })
+                    add(buildJsonObject {
+                        put("type", "object")
+                        putJsonObject("properties") {
+                            putJsonObject("x") { put("type", "number") }
+                            putJsonObject("z") { put("type", "number") }
+                        }
+                        putJsonArray("required") { add(JsonPrimitive("x")); add(JsonPrimitive("z")) }
+                    })
+                }
+            }
+            put("scale", vectorSchema("Per-axis scale factors applied about the model origin after rotation, each finite and > 0. Omitted axes default to 1."))
+            put("translation", vectorSchema("Per-axis offset applied after scaling, in model units. Omitted axes default to 0."))
+            putJsonObject("compressed") {
+                put("type", "boolean")
+                put("description", "QFS-compress the written entry. Defaults to true.")
+            }
+        },
+        required = listOf("path", "outputPath"),
     )
 }
 
